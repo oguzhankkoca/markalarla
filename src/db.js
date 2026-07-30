@@ -75,6 +75,7 @@ ensureColumn("settings", "followup3_body", "TEXT");
 
 ensureColumn("brands", "bounced", "INTEGER DEFAULT 0");
 ensureColumn("brands", "name_normalized", "TEXT");
+ensureColumn("brands", "contact_page_url", "TEXT");
 
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`

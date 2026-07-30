@@ -8,7 +8,8 @@ const DEAL_STAGE_LABELS = {
   rejected: "Reddedildi",
 };
 
-function sentimentBadge(sentiment, replied) {
+function sentimentBadge(sentiment, replied, bounced) {
+  if (bounced) return `<span class="badge bounced">Ulaşmadı (Geri Döndü)</span>`;
   if (!replied) return `<span class="badge pending">Bekleniyor</span>`;
   const map = {
     positive: `<span class="badge found">Olumlu</span>`,
@@ -52,7 +53,7 @@ function renderTracking(brands) {
       <td>${b.name}<br><span class="muted">${b.email || ""}</span></td>
       <td>${sentAtText}</td>
       <td>
-        ${sentimentBadge(b.reply_sentiment, b.replied)}
+        ${sentimentBadge(b.reply_sentiment, b.replied, b.bounced)}
         <div>${sentimentSelect(b.id)}</div>
       </td>
       <td class="muted">${stageText}</td>
@@ -115,6 +116,20 @@ async function loadFollowupTemplate() {
     "Merhaba {{marka}} ekibi,\n\nBu konuda son kez yazıyorum; şu an için uygun değilse anlayışla karşılarım.\n\nSaygılarımla";
 }
 
+const SPAM_TRIGGER_WORDS = [
+  "free", "ücretsiz", "act now", "hemen ara", "limited time", "sınırlı süre",
+  "guarantee", "garanti", "click here", "buraya tıkla", "$$$", "risk free",
+  "winner", "kazandınız", "100% free", "no obligation",
+];
+
+function checkSpamTriggers(subject, body) {
+  const text = `${subject} ${body}`.toLowerCase();
+  const found = SPAM_TRIGGER_WORDS.filter((w) => text.includes(w));
+  const exclamations = (text.match(/!/g) || []).length;
+  if (exclamations >= 3) found.push(`çok fazla ünlem işareti (${exclamations} adet)`);
+  return found;
+}
+
 document.getElementById("saveFollowupBtn").addEventListener("click", async () => {
   const payload = {
     stage1: {
@@ -130,6 +145,18 @@ document.getElementById("saveFollowupBtn").addEventListener("click", async () =>
       body: document.getElementById("followupBody3").value,
     },
   };
+
+  const allText = [payload.stage1, payload.stage2, payload.stage3]
+    .map((s) => `${s.subject} ${s.body}`)
+    .join(" ");
+  const triggers = checkSpamTriggers("", allText);
+  if (triggers.length > 0) {
+    const proceed = confirm(
+      `Takip şablonlarında spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\nBu mailler otomatik gönderileceği için özellikle dikkat et. Yine de kaydetmek istiyor musun?`
+    );
+    if (!proceed) return;
+  }
+
   await fetch("/api/tracking/followup-template", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

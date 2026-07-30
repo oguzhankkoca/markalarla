@@ -3,37 +3,49 @@
 <head>
 <meta charset="UTF-8" />
 <title>Özet / Analitik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/css/style.css" />
-<style>
-  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
-  .stat-card { background: #f9fafb; border-radius: 10px; padding: 16px; text-align: center; }
-  .stat-number { font-size: 28px; font-weight: 700; color: #111827; }
-  .stat-label { font-size: 12px; color: #6b7280; margin-top: 4px; }
-</style>
 </head>
 <body>
-  <div class="topbar">
-    <strong>Özet / Analitik</strong>
-    <a href="/index.html" style="font-size:13px;">&larr; Panele dön</a>
-  </div>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">🚀 Neofa Outreach</div>
+      <nav>
+        <a href="/index.html" class="nav-link">📋 Panel</a>
+        <a href="/tracking.html" class="nav-link">📬 Gönderim Takibi</a>
+        <a href="/analytics.html" class="nav-link active">📊 Özet</a>
+      </nav>
+    </aside>
 
-  <div class="container">
+    <div class="main-content">
+      <div class="container">
 
-    <div class="card">
-      <h2>Genel Durum</h2>
-      <div class="stat-grid" id="mainStats"></div>
+        <div class="page-header">
+          <div>
+            <h1>Özet / Analitik</h1>
+            <p>Kampanyanın genel performansına bir bakış.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>📈 Genel Durum</h2>
+          <div class="stat-grid" id="mainStats"></div>
+        </div>
+
+        <div class="card">
+          <h2>🎯 Oranlar</h2>
+          <div class="stat-grid" id="rateStats"></div>
+        </div>
+
+        <div class="card">
+          <h2>🤝 Anlaşma Aşamaları (gönderilenler arasında)</h2>
+          <div class="stat-grid" id="dealStats"></div>
+        </div>
+
+      </div>
     </div>
-
-    <div class="card">
-      <h2>Oranlar</h2>
-      <div class="stat-grid" id="rateStats"></div>
-    </div>
-
-    <div class="card">
-      <h2>Anlaşma Aşamaları (gönderilenler arasında)</h2>
-      <div class="stat-grid" id="dealStats"></div>
-    </div>
-
   </div>
 
   <script src="/js/analytics.js"></script>

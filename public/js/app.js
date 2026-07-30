@@ -21,7 +21,7 @@ function badge(status) {
     sent: "Gönderildi",
     error: "Hata",
     duplicate_blocked: "Tekrar (Engellendi)",
-    bounced: "Geri Döndü",
+    bounced: "Ulaşmadı (Geri Döndü)",
   };
   return `<span class="badge ${status}">${map[status] || status}</span>`;
 }
@@ -30,14 +30,26 @@ function renderBrands() {
   brandsBody.innerHTML = "";
   for (const b of brands) {
     const tr = document.createElement("tr");
+    const contactLine =
+      !b.email && b.contact_page_url
+        ? `<div class="muted" style="margin-top:4px;">📩 <a href="${b.contact_page_url}" target="_blank" rel="noopener">İletişim formu bulundu ↗</a></div>`
+        : "";
     tr.innerHTML = `
       <td>${b.name}</td>
       <td><input data-field="website" data-id="${b.id}" value="${b.website || ""}" /></td>
-      <td><input data-field="email" data-id="${b.id}" value="${b.email || ""}" /></td>
+      <td>
+        <input data-field="email" data-id="${b.id}" value="${b.email || ""}" />
+        ${contactLine}
+      </td>
       <td>${badge(b.status)}</td>
       <td>
         <button class="small find-btn" data-id="${b.id}">Ara</button>
         <button class="small send-btn" data-id="${b.id}" ${!b.email || b.status === "duplicate_blocked" ? "disabled" : ""}>Gönder</button>
+        ${
+          !b.email && b.contact_page_url
+            ? `<button class="small secondary contact-btn" data-id="${b.id}">Form Aç</button>`
+            : ""
+        }
         <button class="small secondary detail-btn" data-id="${b.id}">Detay</button>
       </td>
     `;
@@ -78,6 +90,27 @@ function attachRowEvents() {
 
   document.querySelectorAll(".send-btn").forEach((btn) => {
     btn.addEventListener("click", () => openPreview(btn.dataset.id));
+  });
+
+  // E-mail bulunamayan ama bir "bize ulaşın" sayfası tespit edilen markalar için:
+  // formu yeni sekmede aç ve hazırladığın mail metnini panoya kopyala, böylece
+  // formun mesaj alanına doğrudan yapıştırabilirsin. Formu otomatik doldurup
+  // göndermiyoruz çünkü her sitenin form yapısı farklı; kör bir otomasyon markanın
+  // sitesine hatalı/eksik veri gönderebilir.
+  document.querySelectorAll(".contact-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const brand = brands.find((b) => String(b.id) === btn.dataset.id);
+      if (!brand || !brand.contact_page_url) return;
+      const subject = fillTemplate(subjectInput.value, brand.name);
+      const body = fillTemplate(bodyInput.value, brand.name);
+      try {
+        await navigator.clipboard.writeText(`Konu: ${subject}\n\n${body}`);
+        alert("Mail metni panoya kopyalandı. Açılan iletişim formuna yapıştırabilirsin.");
+      } catch (e) {
+        alert("Metin panoya kopyalanamadı, formu manuel doldurman gerekebilir.");
+      }
+      window.open(brand.contact_page_url, "_blank", "noopener");
+    });
   });
 
   document.querySelectorAll(".detail-btn").forEach((btn) => {
@@ -223,7 +256,47 @@ document.getElementById("findAllBtn").addEventListener("click", async () => {
   }, 3000);
 });
 
+// Basit spam-tetikleyici kelime kontrolü. Kesin bir spam filtresi değildir,
+// sadece Gmail/Outlook gibi filtrelerin sıkça tepki verdiği kalıpları
+// göstererek şablonu göndermeden önce gözden geçirmeni sağlar.
+const SPAM_TRIGGER_WORDS = [
+  "free",
+  "ücretsiz",
+  "act now",
+  "hemen ara",
+  "limited time",
+  "sınırlı süre",
+  "guarantee",
+  "garanti",
+  "click here",
+  "buraya tıkla",
+  "$$$",
+  "act immediately",
+  "risk free",
+  "winner",
+  "kazandınız",
+  "100% free",
+  "no obligation",
+];
+
+function checkSpamTriggers(subject, body) {
+  const text = `${subject} ${body}`.toLowerCase();
+  const found = SPAM_TRIGGER_WORDS.filter((w) => text.includes(w));
+  const exclamations = (text.match(/!/g) || []).length;
+  if (exclamations >= 3) found.push(`çok fazla ünlem işareti (${exclamations} adet)`);
+  const capsWords = (subject.match(/\b[A-ZÇĞİÖŞÜ]{4,}\b/g) || []).length;
+  if (capsWords >= 1) found.push("konu satırında tamamı büyük harf kelime");
+  return found;
+}
+
 document.getElementById("saveTemplateBtn").addEventListener("click", () => {
+  const triggers = checkSpamTriggers(subjectInput.value, bodyInput.value);
+  if (triggers.length > 0) {
+    const proceed = confirm(
+      `Şablonda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\nYine de kaydetmek istiyor musun?`
+    );
+    if (!proceed) return;
+  }
   localStorage.setItem("template_subject", subjectInput.value);
   localStorage.setItem("template_body", bodyInput.value);
   alert("Şablon kaydedildi.");

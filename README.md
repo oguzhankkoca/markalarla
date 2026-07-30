@@ -52,6 +52,18 @@ Normal Gmail şifreni kullanamazsın, Google özel bir "Uygulama Şifresi" ister
 3. **E-mail bulma**: "Tüm markalar için email ara" butonuna bas. Bu işlem internetten
    arama yapıp markanın resmi sitesini bulmaya, sonra o sitedeki iletişim sayfalarını
    tarayıp e-mail çıkarmaya çalışır. Süre marka sayısına göre birkaç dakika sürebilir.
+   - Arama sonuçları artık marka adıyla domain adını karşılaştırıp en iyi eşleşeni seçiyor
+     (ör. "Acme Coffee" için acmecoffee.com gibi bir sonuç, alakasız bir haber/dizin sitesine
+     tercih edilir) ve seçilen sitenin ana sayfasında marka adının gerçekten geçip geçmediğini
+     kontrol ediyor. Yine de bu %100 garanti değil — "Detay" butonundan hangi adımların
+     izlendiğini görebilir, şüpheliyse e-maili göndermeden önce siteyi elle kontrol edebilirsin.
+   - E-mail bulunamayan ama markanın sitesinde bir "bize ulaşın" / iletişim formu tespit
+     edilen markalarda, e-mail sütununun altında **"İletişim formu bulundu"** linki ve
+     satırda bir **"Form Aç"** butonu belirir. Bu butona basınca hazırladığın mail metni
+     panoya kopyalanır ve form yeni sekmede açılır — metni forma yapıştırıp elle gönderirsin.
+     (Formu otomatik doldurup göndermiyoruz: her sitenin form yapısı, alan isimleri ve
+     doğrulamaları farklı olduğu için körü körüne otomasyon markanın sitesine hatalı/eksik
+     veri göndermesine yol açabilir — bu yüzden son adımı bilerek sana bırakıyoruz.)
 4. **Mail şablonu**: konu ve içerik yaz, `{{marka}}` yazdığın her yer gönderim sırasında
    otomatik marka adıyla değişir.
 5. **Gönderim**: tabloda her marka satırında e-maili kontrol et/düzelt (otomatik bulma
@@ -77,7 +89,8 @@ Panelin sağ üstünden "Gönderim Takibi" sayfasına gidebilirsin. Bu sayfa:
   takip edebilirsin.
 - **Excel'e Aktar** butonuyla tüm marka + durum verisini tek dosya olarak indirebilirsin.
 - **Bounce (geri dönen mail) tespiti**: bir mail geçersiz adrese gittiyse Gmail'in gönderdiği
-  "teslim edilemedi" bildirimini fark edip o markayı "Geri Döndü" olarak işaretler, follow-up
+  "teslim edilemedi" (failure/mailer-daemon) bildirimini fark edip o markayı hem ana panelde
+  hem Gönderim Takibi sayfasında **"Ulaşmadı (Geri Döndü)"** olarak açıkça işaretler, follow-up
   döngüsüne almaz — e-maili düzeltip elle tekrar deneyebilirsin.
 - **Otomatik günlük kontrol**: sunucu (Render ücretli plan) sürekli açık olduğu için, sistem
   her gün otomatik olarak (UTC 08:00, Türkiye saatiyle ~11:00) kendiliğinden yanıt/bounce
@@ -108,6 +121,53 @@ yüklersen sistem otomatik kontrol eder:
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim
 sayısı, yanıt oranı, olumlu yanıt oranı ve anlaşma aşamalarının dağılımını tek bakışta
 görebilirsin.
+
+## Mailin Spam'e Düşmemesi (Deliverability)
+
+Kod tarafında eklenenler:
+- Her mailde **List-Unsubscribe** başlığı gönderiliyor — alıcı "spam" diye işaretlemek yerine
+  mail istemcisindeki "abonelikten çık" seçeneğini kullanırsa, gönderici itibarın
+  (sender reputation) korunur.
+- **Reply-To** başlığı doğru ayarlanıyor, yanıtlar garanti şekilde sana geliyor.
+- Şablon kaydederken **spam tetikleyici kelime kontrolü** yapılıyor ("free", "ücretsiz",
+  "act now", çok fazla ünlem işareti gibi kalıpları tespit edip uyarıyor).
+
+Ama en etkili adım kod dışında, **domain doğrulama** (SPF/DKIM/DMARC) kurmak — bunlar
+olmadan Gmail dahil çoğu servis mailini şüpheli görebilir:
+
+### 1. SPF (genelde zaten var, kontrol et)
+Google Workspace domain'i olduğun için muhtemelen otomatik ayarlı, ama domain sağlayıcında
+(DNS ayarları neofa.net için nerede yönetiliyorsa orada) şu TXT kaydının olduğunu kontrol et:
+```
+v=spf1 include:_spf.google.com ~all
+```
+
+### 2. DKIM (muhtemelen kurulu değil, bunu mutlaka yap)
+1. admin.google.com'a gir (yönetici hesabınla)
+2. **Apps > Google Workspace > Gmail > Authenticate email**'e git
+3. Domain'ini seç, **"Generate New Record"** de, key length olarak **2048-bit** seç
+4. Google sana bir TXT kaydı verir (host adı genelde `google._domainkey`), bunu domain'inin
+   DNS ayarlarına ekle
+5. DNS'e ekledikten sonra Google Admin'e dönüp **"Start Authentication"** de
+
+### 3. DMARC
+Domain'inin DNS ayarlarına şu TXT kaydını `_dmarc.neofa.net` host adıyla ekle:
+```
+v=DMARC1; p=none; rua=mailto:dmarc@neofa.net
+```
+(`p=none` sadece izleme yapar, hiçbir maili engellemez — güvenli bir başlangıç. Zamanla
+raporlara göre `p=quarantine` ya da `p=reject`'e geçirilebilir.)
+
+Bu üç kayıt da DNS'e yayılmak için 1-48 saat sürebilir. Kurduktan sonra
+[mail-tester.com](https://www.mail-tester.com) gibi bir siteye test maili atıp spam
+puanını kontrol edebilirsin.
+
+### Diğer öneriler
+- İlk günlerde az sayıda mail gönderip yavaş yavaş artır ("warm-up") — birden 50-100 mail
+  atmak yeni/az kullanılan bir gönderim düzenini şüpheli gösterebilir.
+- Şablonlarda çok fazla link, büyük harfle yazılmış kelimeler, aşırı ünlem işareti kullanma.
+- Alıcı "spam" derse ya da olumsuz yanıt verirse (sistem zaten bunu **kara liste** özelliğiyle
+  hariç tutuyor) bir daha o markaya yazma — şikayet oranı düşük tutmak en önemli faktör.
 
 ## Önemli sınırlamalar
 

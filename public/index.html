@@ -3,73 +3,88 @@
 <head>
 <meta charset="UTF-8" />
 <title>Marka Outreach Paneli</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
-  <div class="topbar">
-    <strong>Marka Outreach Paneli</strong>
-    <div>
-      <a href="/analytics.html" style="font-size:13px; margin-right:12px;">Özet</a>
-      <a href="/tracking.html" style="font-size:13px; margin-right:12px;">Gönderim Takibi &rarr;</a>
-      <span id="emailStatus" class="status-line"></span>
-    </div>
-  </div>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">🚀 Neofa Outreach</div>
+      <nav>
+        <a href="/index.html" class="nav-link active">📋 Panel</a>
+        <a href="/tracking.html" class="nav-link">📬 Gönderim Takibi</a>
+        <a href="/analytics.html" class="nav-link">📊 Özet</a>
+      </nav>
+      <div class="sidebar-footer" id="emailStatus"></div>
+    </aside>
 
-  <div class="container">
+    <div class="main-content">
+      <div class="container">
 
-    <div class="card">
-      <h2>1. Bilgilerin (mail imzası için)</h2>
-      <input type="text" id="settingsName" placeholder="Adın soyadın" />
-      <input type="text" id="settingsCompany" placeholder="Şirket adın" />
-      <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
-      <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
-      <button id="saveSettingsBtn" class="secondary">Kaydet</button>
-    </div>
+        <div class="page-header">
+          <div>
+            <h1>Marka Outreach Paneli</h1>
+            <p>Marka listeni yükle, e-mailleri bul, şablonunu hazırla ve gönder.</p>
+          </div>
+        </div>
 
-    <div class="card">
-      <h2>2. Marka listesi yükle (Excel/CSV)</h2>
-      <p class="muted">Dosyada marka adlarının olduğu bir sütun olmalı (örn: "Marka", "Brand"). İsteğe bağlı web sitesi sütunu da ekleyebilirsin.</p>
-      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
-      <button id="uploadBtn">Yükle</button>
-      <span class="muted" id="uploadStatus"></span>
-    </div>
+        <div class="card">
+          <h2>1️⃣ Bilgilerin (mail imzası için)</h2>
+          <input type="text" id="settingsName" placeholder="Adın soyadın" />
+          <input type="text" id="settingsCompany" placeholder="Şirket adın" />
+          <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
+          <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
+          <button id="saveSettingsBtn" class="secondary">Kaydet</button>
+        </div>
 
-    <div class="card">
-      <h2>3. E-mail bulma</h2>
-      <div class="toolbar">
-        <button id="findAllBtn">Tüm markalar için email ara</button>
-        <span class="muted" id="findStatus"></span>
+        <div class="card">
+          <h2>2️⃣ Marka listesi yükle (Excel/CSV)</h2>
+          <p class="muted">Dosyada marka adlarının olduğu bir sütun olmalı (örn: "Marka", "Brand"). İsteğe bağlı web sitesi sütunu da ekleyebilirsin.</p>
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+          <button id="uploadBtn">Yükle</button>
+          <span class="muted" id="uploadStatus"></span>
+        </div>
+
+        <div class="card">
+          <h2>3️⃣ E-mail bulma</h2>
+          <div class="toolbar">
+            <button id="findAllBtn">Tüm markalar için email ara</button>
+            <span class="muted" id="findStatus"></span>
+          </div>
+          <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt.</p>
+        </div>
+
+        <div class="card">
+          <h2>4️⃣ Mail şablonu</h2>
+          <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
+          <textarea id="bodyInput" rows="8" placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></textarea>
+          <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
+        </div>
+
+        <div class="card">
+          <h2>5️⃣ Markalar ve gönderim</h2>
+          <div class="toolbar">
+            <button id="sendAllBtn">Bulunan tüm e-maillere gönder</button>
+            <span class="muted" id="sendStatus"></span>
+          </div>
+          <table id="brandsTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>Website</th>
+                <th>E-mail</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="brandsBody"></tbody>
+          </table>
+        </div>
+
       </div>
-      <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt.</p>
     </div>
-
-    <div class="card">
-      <h2>4. Mail şablonu</h2>
-      <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
-      <textarea id="bodyInput" rows="8" placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></textarea>
-      <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
-    </div>
-
-    <div class="card">
-      <h2>5. Markalar ve gönderim</h2>
-      <div class="toolbar">
-        <button id="sendAllBtn">Bulunan tüm e-maillere gönder</button>
-        <span class="muted" id="sendStatus"></span>
-      </div>
-      <table id="brandsTable">
-        <thead>
-          <tr>
-            <th>Marka</th>
-            <th>Website</th>
-            <th>E-mail</th>
-            <th>Durum</th>
-            <th>İşlem</th>
-          </tr>
-        </thead>
-        <tbody id="brandsBody"></tbody>
-      </table>
-    </div>
-
   </div>
 
   <div id="previewOverlay" class="overlay" style="display:none;">

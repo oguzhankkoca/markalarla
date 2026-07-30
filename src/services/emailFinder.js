@@ -25,8 +25,9 @@ const BAD_DOMAINS = [
 ];
 
 // Arama sonuçlarında markanın kendi sitesi yerine sıkça çıkan sosyal medya /
-// pazar yeri / ansiklopedi siteleri — bunlar "resmi site" olarak kabul edilmez,
-// çünkü üzerlerinde markaya ait bir e-mail bulunmaz.
+// pazar yeri / dizin / haber / ansiklopedi siteleri — bunlar "resmi site" olarak
+// kabul edilmez, çünkü üzerlerinde markaya ait bir e-mail bulunmaz ve yanlışlıkla
+// seçilirse markanın kendi sitesi yerine alakasız bir sayfa taranmış olur.
 const NON_OFFICIAL_DOMAINS = [
   "instagram.com",
   "facebook.com",
@@ -47,10 +48,106 @@ const NON_OFFICIAL_DOMAINS = [
   "bloomberg.com",
   "glassdoor.com",
   "indeed.com",
+  "n11.com",
+  "reddit.com",
+  "quora.com",
+  "medium.com",
+  "trustpilot.com",
+  "sitejabber.com",
+  "consumeraffairs.com",
+  "g2.com",
+  "capterra.com",
+  "zoominfo.com",
+  "owler.com",
+  "manta.com",
+  "bbb.org",
+  "dnb.com",
+  "opencorporates.com",
+  "yellowpages.com",
+  "forbes.com",
+  "businesswire.com",
+  "prnewswire.com",
+  "globenewswire.com",
+  "etsy.com",
+  "aliexpress.com",
+  "alibaba.com",
+  "walmart.com",
+  "target.com",
+  "bestbuy.com",
+  "google.com",
+  "bing.com",
+];
+
+// Yukarıdaki tam domain listesine ek olarak, marka/ülke fark etmeksizin her yerde
+// karşımıza çıkabilen büyük pazar yerlerini TLD'den bağımsız yakalamak için desen bazlı kontrol.
+const NON_OFFICIAL_PATTERNS = [
+  /(^|\.)amazon\./i,
+  /(^|\.)ebay\./i,
+  /(^|\.)walmart\./i,
+  /(^|\.)aliexpress\./i,
+  /(^|\.)alibaba\./i,
+  /(^|\.)trendyol\./i,
+  /(^|\.)hepsiburada\./i,
+  /(^|\.)wikipedia\./i,
+  /(^|\.)yelp\./i,
+  /(^|\.)trustpilot\./i,
 ];
 
 function isOfficialLookingDomain(domain) {
-  return !NON_OFFICIAL_DOMAINS.some((bad) => domain === bad || domain.endsWith(`.${bad}`));
+  if (NON_OFFICIAL_DOMAINS.some((bad) => domain === bad || domain.endsWith(`.${bad}`))) {
+    return false;
+  }
+  if (NON_OFFICIAL_PATTERNS.some((re) => re.test(domain))) return false;
+  return true;
+}
+
+const COMPANY_SUFFIXES = [
+  "inc", "incorporated", "llc", "ltd", "limited", "co", "corp", "corporation",
+  "company", "gmbh", "srl", "sa", "plc", "group", "brands", "brand",
+  "usa", "international", "global", "holdings",
+];
+
+function stripDiacritics(str) {
+  return (str || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+function normalizeForMatch(str) {
+  return stripDiacritics(str || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function coreBrandTokens(brandName) {
+  return stripDiacritics(brandName || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter((w) => w && !COMPANY_SUFFIXES.includes(w));
+}
+
+// Bulunan domain'in gerçekten aranan markaya ait olup olmadığını kabaca kontrol eder.
+// Kesin bir doğrulama değildir ama "alakasız bir siteyi markanın sitesi sanma" hatasının
+// önüne büyük ölçüde geçer.
+function domainMatchesBrand(domain, brandName) {
+  const coreDomain = normalizeForMatch((domain || "").split(".")[0]);
+  if (!coreDomain) return false;
+  const normBrandFull = normalizeForMatch(brandName);
+  if (normBrandFull && (coreDomain.includes(normBrandFull) || normBrandFull.includes(coreDomain))) {
+    return true;
+  }
+  const tokens = coreBrandTokens(brandName).sort((a, b) => b.length - a.length);
+  const mainToken = tokens[0];
+  if (mainToken && mainToken.length >= 3 && coreDomain.includes(mainToken)) return true;
+  return false;
+}
+
+// Bir aday listesinden marka adıyla en iyi örtüşeni seçer; hiçbiri örtüşmüyorsa
+// (bazı markaların domaini gerçekten farklı olabilir) yine de ilk sonucu döner
+// ama bunu trace'e "dikkatli kontrol et" notuyla işaretleriz.
+function pickBestCandidate(candidates, brandName) {
+  if (candidates.length === 0) return null;
+  const matched = candidates.find((c) => domainMatchesBrand(c.domain, brandName));
+  return matched || candidates[0];
 }
 
 const httpClient = axios.create({
@@ -90,7 +187,8 @@ function cleanEmails(rawEmails, domain) {
 }
 
 async function findOfficialDomainViaSearch(brandName, trace) {
-  // 1) SerpAPI varsa (en güvenilir)
+  // 1) SerpAPI varsa (en güvenilir) — tüm sonuçları toplayıp marka adıyla en iyi
+  // örtüşeni seçiyoruz (sadece ilk sonucu almak yerine).
   if (process.env.SERPAPI_KEY) {
     try {
       const { data, status } = await httpClient.get("https://serpapi.com/search.json", {
@@ -109,20 +207,33 @@ async function findOfficialDomainViaSearch(brandName, trace) {
         if (results.length === 0) {
           trace.push("SerpAPI 200 döndü ama organic_results boş.");
         }
-        let skipped = [];
+        const candidates = [];
+        const skipped = [];
         for (const r of results) {
-          if (r.link) {
+          if (!r.link) continue;
+          try {
             const domain = new URL(r.link).hostname.replace(/^www\./, "");
             if (!isOfficialLookingDomain(domain)) {
               skipped.push(domain);
               continue;
             }
-            trace.push(`SerpAPI ile bulundu: ${domain}`);
-            return domain;
+            candidates.push({ domain, source: "SerpAPI" });
+          } catch (e) {
+            continue;
           }
         }
         if (skipped.length > 0) {
-          trace.push(`SerpAPI sonuçları sosyal medya/pazar yeriydi, atlandı: ${skipped.join(", ")}`);
+          trace.push(`SerpAPI sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skipped.join(", ")}`);
+        }
+        if (candidates.length > 0) {
+          trace.push(`SerpAPI adayları: ${candidates.map((c) => c.domain).join(", ")}`);
+          const best = pickBestCandidate(candidates, brandName);
+          if (domainMatchesBrand(best.domain, brandName)) {
+            trace.push(`SerpAPI ile bulundu (marka adıyla örtüşüyor): ${best.domain}`);
+          } else {
+            trace.push(`SerpAPI'den bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${best.domain}`);
+          }
+          return best.domain;
         }
       }
     } catch (e) {
@@ -141,7 +252,8 @@ async function findOfficialDomainViaSearch(brandName, trace) {
     const links = $(".result__a")
       .map((_, el) => $(el).attr("href"))
       .get();
-    let skippedDdg = [];
+    const candidatesDdg = [];
+    const skippedDdg = [];
     for (const link of links) {
       if (!link) continue;
       const urlMatch = link.match(/uddg=([^&]+)/);
@@ -152,15 +264,25 @@ async function findOfficialDomainViaSearch(brandName, trace) {
           skippedDdg.push(domain);
           continue;
         }
-        trace.push(`DuckDuckGo ile bulundu: ${domain}`);
-        return domain;
+        candidatesDdg.push({ domain, source: "DuckDuckGo" });
       } catch (e) {
         continue;
       }
     }
     if (skippedDdg.length > 0) {
-      trace.push(`DuckDuckGo sonuçları sosyal medya/pazar yeriydi, atlandı: ${skippedDdg.join(", ")}`);
-    } else {
+      trace.push(`DuckDuckGo sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skippedDdg.join(", ")}`);
+    }
+    if (candidatesDdg.length > 0) {
+      trace.push(`DuckDuckGo adayları: ${candidatesDdg.map((c) => c.domain).join(", ")}`);
+      const best = pickBestCandidate(candidatesDdg, brandName);
+      if (domainMatchesBrand(best.domain, brandName)) {
+        trace.push(`DuckDuckGo ile bulundu (marka adıyla örtüşüyor): ${best.domain}`);
+      } else {
+        trace.push(`DuckDuckGo'dan bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${best.domain}`);
+      }
+      return best.domain;
+    }
+    if (skippedDdg.length === 0) {
       trace.push(`DuckDuckGo yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
     }
   } catch (e) {
@@ -213,12 +335,15 @@ async function findEmailsViaHunter(domain, trace) {
   }
 }
 
-async function scrapePageForEmails(url, trace) {
+// Bir sayfayı hem email hem de "burası bir iletişim sayfası mı" açısından tarar.
+// found: sayfada bulunan email adayları
+// looksLikeContactPage: sayfa gerçekten erişilebilir VE bir form/iletişim işareti içeriyor mu
+async function scrapePage(url, trace) {
   try {
     const { data, status } = await httpClient.get(url);
     if (status >= 400 || typeof data !== "string") {
       trace.push(`${url} -> HTTP ${status}, atlandı.`);
-      return [];
+      return { found: [], looksLikeContactPage: false, text: "" };
     }
     const found = data.match(EMAIL_REGEX) || [];
     const $ = cheerio.load(data);
@@ -227,11 +352,12 @@ async function scrapePageForEmails(url, trace) {
       const email = href.replace("mailto:", "").split("?")[0];
       if (email) found.push(email);
     });
-    trace.push(`${url} -> ${found.length} email adayı bulundu.`);
-    return found;
+    const hasForm = $("form").length > 0;
+    trace.push(`${url} -> ${found.length} email adayı bulundu${hasForm ? ", bir form içeriyor" : ""}.`);
+    return { found, looksLikeContactPage: hasForm, text: $("body").text().slice(0, 5000) };
   } catch (e) {
     trace.push(`${url} -> istek hatası: ${e.message}`);
-    return [];
+    return { found: [], looksLikeContactPage: false, text: "" };
   }
 }
 
@@ -244,6 +370,23 @@ function looksLikeDomain(value) {
   const cleaned = value.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(cleaned);
 }
+
+// E-mail bulunamazsa denenecek, markanın "bize ulaşın" tarzı sayfalarının olası yolları.
+const CONTACT_PAGE_PATHS = [
+  "/contact",
+  "/contact-us",
+  "/contactus",
+  "/pages/contact",
+  "/pages/contact-us",
+  "/about/contact",
+  "/support",
+  "/support/contact",
+  "/get-in-touch",
+  "/customer-service",
+  "/iletisim",
+  "/bize-ulasin",
+  "/musteri-hizmetleri",
+];
 
 async function findBrandEmail(brandName, providedWebsite) {
   const trace = [];
@@ -261,10 +404,26 @@ async function findBrandEmail(brandName, providedWebsite) {
 
   if (!domain) {
     trace.push("Hiçbir yöntemle resmi site/domain bulunamadı.");
-    return { email: null, website: null, source: null, confidence: "not_found", trace };
+    return { email: null, website: null, source: null, confidence: "not_found", contactUrl: null, trace };
   }
 
   const website = `https://${domain}`;
+
+  // Seçilen domain gerçekten markaya mı ait, yoksa alakasız bir site mi taranıyor —
+  // ana sayfayı çekip marka adının sayfada geçip geçmediğine bakarak basit bir
+  // sağlama yapıyoruz. Kesin değildir ama yanlış siteye yazılan mailleri azaltır.
+  let homepageLooksRelated = true;
+  try {
+    const home = await scrapePage(website, trace);
+    const normPageText = normalizeForMatch(home.text);
+    const mainToken = coreBrandTokens(brandName).sort((a, b) => b.length - a.length)[0];
+    if (mainToken && mainToken.length >= 3 && !normPageText.includes(mainToken)) {
+      homepageLooksRelated = false;
+      trace.push(`Uyarı: "${brandName}" adı ${website} ana sayfasında geçmiyor, yanlış site seçilmiş olabilir — göndermeden önce kontrol et.`);
+    }
+  } catch (e) {
+    // ana sayfa sağlaması başarısız olursa sessizce devam et, kritik değil
+  }
 
   const hunterEmails = await findEmailsViaHunter(domain, trace);
   if (hunterEmails.length > 0) {
@@ -274,31 +433,48 @@ async function findBrandEmail(brandName, providedWebsite) {
         email: cleaned[0].email,
         website,
         source: "hunter.io",
-        confidence: cleaned[0].sameDomain ? "high" : "medium",
+        confidence: cleaned[0].sameDomain && homepageLooksRelated ? "high" : "medium",
+        contactUrl: null,
         trace,
       };
     }
   }
 
-  const pathsToTry = ["", "/contact", "/contact-us", "/iletisim", "/about", "/hakkimizda"];
+  const pathsToTry = ["", ...CONTACT_PAGE_PATHS];
   let allEmails = [];
+  let contactUrl = null;
   for (const p of pathsToTry) {
-    const emails = await scrapePageForEmails(website + p, trace);
-    allEmails = allEmails.concat(emails);
+    const result = await scrapePage(website + p, trace);
+    allEmails = allEmails.concat(result.found);
+    if (!contactUrl && p !== "" && result.looksLikeContactPage) {
+      contactUrl = website + p;
+    }
     await sleep(300);
     if (allEmails.length > 0 && p !== "") break;
   }
 
   const cleaned = cleanEmails(allEmails, domain);
   if (cleaned.length === 0) {
-    trace.push("Sitede/iletişim sayfalarında hiç email bulunamadı.");
-    return { email: null, website, source: "site_taramasi", confidence: "not_found", trace };
+    trace.push(
+      contactUrl
+        ? `Sitede email bulunamadı ama bir iletişim formu tespit edildi: ${contactUrl}`
+        : "Sitede/iletişim sayfalarında hiç email ya da form bulunamadı."
+    );
+    return {
+      email: null,
+      website,
+      source: "site_taramasi",
+      confidence: "not_found",
+      contactUrl,
+      trace,
+    };
   }
   return {
     email: cleaned[0].email,
     website,
     source: "site_taramasi",
-    confidence: cleaned[0].sameDomain ? "high" : "low",
+    confidence: cleaned[0].sameDomain && homepageLooksRelated ? "high" : "low",
+    contactUrl: null,
     trace,
   };
 }

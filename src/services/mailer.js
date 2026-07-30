@@ -43,6 +43,16 @@ async function sendMail({ to, subject, body }) {
     to,
     subject,
     text: body,
+    // Deliverability iyileştirmeleri:
+    // - List-Unsubscribe: alıcının mail istemcisinde "abonelikten çık" seçeneği
+    //   gösterir; kişi "spam" diye işaretlemek yerine bunu kullanırsa gönderici
+    //   itibarın (sender reputation) korunur.
+    // - Reply-To: yanıtların gerçek adresine gitmesini garantiler.
+    headers: {
+      "List-Unsubscribe": `<mailto:${process.env.EMAIL_USER}?subject=unsubscribe>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    },
+    replyTo: process.env.EMAIL_USER,
   };
 
   try {

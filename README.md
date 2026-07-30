@@ -42,6 +42,32 @@ Normal Gmail şifreni kullanamazsın, Google özel bir "Uygulama Şifresi" ister
 5. Çıkan 16 haneli şifreyi kopyala, `.env` dosyasındaki `EMAIL_APP_PASSWORD` alanına
    boşluksuz yapıştır.
 
+## ⚠️ Render'da kalıcı veri (Persistent Disk) — ÇOK ÖNEMLİ
+
+Render'ın (ve çoğu bulut hosting'in) web servisleri **varsayılan olarak dosyaları kalıcı
+tutmaz**: bir "Persistent Disk" eklemediğin sürece, her yeni deploy'da (GitHub'a yeni bir
+zip yükleyip Render'ın otomatik güncellemesinde) sunucudaki dosyalar sıfırlanır. Bu
+uygulamanın tüm verisi (marka listen, bulunan e-mailler, gönderim geçmişi, takip durumu)
+`data/app.sqlite` dosyasında tutulduğu için, disk eklemeden her güncelleme yaptığında **bu
+veriler kayboluyor demektir.**
+
+Bunu kalıcı hale getirmek için (bir kere yapman yeterli):
+
+1. Render'da servisinin sayfasına git, sol menüden **Disks** sekmesine tıkla.
+2. **Add Disk** de. İsim istediğin gibi olabilir (örn. `data`), **Mount Path** kısmına
+   `/var/data` yaz, boyut için 1 GB yeterli (çok ucuz, aylık birkaç kuruş).
+3. **Environment** sekmesine git, yeni bir değişken ekle: Key = `DATA_DIR`, Value = `/var/data`.
+4. Kaydet — Render servisi yeniden başlatacak. Bundan sonra veritabanı bu kalıcı diskte
+   tutulur ve GitHub'a yeni sürüm yüklesen bile silinmez.
+
+**Not:** Disk eklemek "zero-downtime deploy" özelliğini kapatır (deploy sırasında birkaç
+saniyeliğine site erişilemez olur) — tek kullanıcılı bir araç için bu önemli bir dezavantaj
+değil.
+
+Eğer şu ana kadar disk eklemeden birden fazla güncelleme yaptıysan, önceki marka listelerin
+muhtemelen siliniyor olabilir — disk ekledikten sonra Excel'ini tekrar yükleyip baştan
+başlayabilirsin, bundan sonrası kalıcı olacak.
+
 ## Kullanım
 
 1. **Bilgilerin**: adın, şirketin, teklifin ve imzanı gir, "Kaydet"e bas (mail şablonu
@@ -173,8 +199,24 @@ puanını kontrol edebilirsin.
 
 - **E-mail bulma doğruluğu**: ücretsiz yöntem (arama + site tarama) her marka için sonuç
   bulamayabilir, bazen yanlış/genel bir e-mail bulabilir. Göndermeden önce mutlaka kontrol
-  et. Daha isabetli sonuç için `.env`'e `SERPAPI_KEY` (serpapi.com) ya da `HUNTER_API_KEY`
-  (hunter.io) eklenebilir — ikisinin de ücretsiz/deneme planı var.
+  et. Daha isabetli sonuç için `.env`'e `SERPER_API_KEY` (serper.dev) ve/veya `SERPAPI_KEY`
+  (serpapi.com), ayrıca `HUNTER_API_KEY` (hunter.io) eklenebilir — hepsinin ücretsiz/deneme
+  planı var.
+- **Hangi arama sağlayıcısını kullanmalıyım?**: `SERPER_API_KEY` tanımlıysa domain arama
+  önce onunla denenir, sonra `SERPAPI_KEY` ile, ikisi de yoksa/kotası bittiyse ücretsiz
+  DuckDuckGo'ya düşer. Fiyat/performans açısından **Serper.dev genelde SerpAPI'den dolar
+  başına çok daha fazla arama hakkı verir** (SerpAPI'de $25/ay ~1.000 arama, Serper.dev'de
+  aynı paraya ~25.000 arama civarı — kesin rakamlar zamanla değişebilir, satın almadan önce
+  ilgili sitelerin güncel fiyat sayfasına bak). Yani ek arama hakkı satın alacaksan
+  Serper.dev'e yatırım yapmak genelde daha verimli.
+- **Not**: SerpAPI/Serper.dev sadece markanın **resmi domain'ini bulmak** için kullanılır;
+  gerçek e-mail adresini bulma işini Hunter.io ya da ücretsiz site taraması yapar. Yani bu
+  API'lerden birine kota alman, sitesi genelde hiç e-mail yayınlamayan (sadece iletişim
+  formu olan) markalarda e-mail bulma oranını artırmaz — sadece doğru siteyi bulma oranını
+  artırır.
+- **Kota biterse**: hangi sağlayıcının kotası biterse (HTTP 429 ya da "kota bitti" hatası)
+  uygulama o sağlayıcıyı 1 saat boyunca atlayıp bir sonrakine geçer, böylece boşa istek
+  harcamaz. Kotalar genelde her ay sıfırlanır.
 - **Gönderim limiti**: normal bir Gmail hesabının günlük gönderim limiti var (~500 mail/gün).
   Çok büyük listelerde bunu aşmamaya dikkat et. Uygulama gönderimler arasına 1.5 saniye
   bekleme koyar.

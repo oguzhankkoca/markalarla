@@ -2,7 +2,13 @@ const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 
-const dataDir = path.join(__dirname, "..", "data");
+// ÖNEMLİ: Render (ve çoğu bulut hosting) varsayılan olarak kalıcı olmayan (ephemeral)
+// bir dosya sistemi kullanır — "Persistent Disk" eklenmediği sürece her yeni deploy'da
+// sunucudaki dosyalar (bu veritabanı dahil) sıfırlanır. Bunu önlemek için:
+// Render'da bir Disk oluşturup DATA_DIR ortam değişkenini o disk'in mount path'ine
+// eşitle (örn. DATA_DIR=/var/data). DATA_DIR tanımlı değilse (örn. yerel bilgisayarda
+// çalıştırırken) eskisi gibi proje klasörü içindeki data/ dizinini kullanır.
+const dataDir = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(path.join(dataDir, "app.sqlite"));

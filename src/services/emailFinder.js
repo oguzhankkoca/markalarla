@@ -186,64 +186,152 @@ function cleanEmails(rawEmails, domain) {
   return list;
 }
 
-async function findOfficialDomainViaSearch(brandName, trace) {
-  // 1) SerpAPI varsa (en güvenilir) — tüm sonuçları toplayıp marka adıyla en iyi
-  // örtüşeni seçiyoruz (sadece ilk sonucu almak yerine).
-  if (process.env.SERPAPI_KEY) {
-    try {
-      const { data, status } = await httpClient.get("https://serpapi.com/search.json", {
-        params: {
-          q: `${brandName} official website`,
-          api_key: process.env.SERPAPI_KEY,
-          num: 10,
-        },
-      });
-      if (status !== 200) {
-        trace.push(`SerpAPI HTTP ${status}: ${JSON.stringify(data).slice(0, 200)}`);
-      } else if (data.error) {
-        trace.push(`SerpAPI hata döndürdü: ${data.error}`);
-      } else {
-        const results = data.organic_results || [];
-        if (results.length === 0) {
-          trace.push("SerpAPI 200 döndü ama organic_results boş.");
-        }
-        const candidates = [];
-        const skipped = [];
-        for (const r of results) {
-          if (!r.link) continue;
-          try {
-            const domain = new URL(r.link).hostname.replace(/^www\./, "");
-            if (!isOfficialLookingDomain(domain)) {
-              skipped.push(domain);
-              continue;
-            }
-            candidates.push({ domain, source: "SerpAPI" });
-          } catch (e) {
-            continue;
-          }
-        }
-        if (skipped.length > 0) {
-          trace.push(`SerpAPI sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skipped.join(", ")}`);
-        }
-        if (candidates.length > 0) {
-          trace.push(`SerpAPI adayları: ${candidates.map((c) => c.domain).join(", ")}`);
-          const best = pickBestCandidate(candidates, brandName);
-          if (domainMatchesBrand(best.domain, brandName)) {
-            trace.push(`SerpAPI ile bulundu (marka adıyla örtüşüyor): ${best.domain}`);
-          } else {
-            trace.push(`SerpAPI'den bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${best.domain}`);
-          }
-          return best.domain;
-        }
-      }
-    } catch (e) {
-      trace.push(`SerpAPI istek hatası: ${e.message}`);
-    }
-  } else {
-    trace.push("SERPAPI_KEY tanımlı değil, atlandı.");
-  }
+// Arama sağlayıcılarından biri kotasını bitirdiğinde (429 ya da "run out of
+// searches" gibi bir hata), aynı toplu arama (find-all) çalışması boyunca her
+// marka için tekrar tekrar başarısız istek atıp zaman kaybetmemek için kısa süreli
+// bir "dinlenmeye al" bayrağı tutuyoruz. Süre dolunca otomatik tekrar dener.
+let serperRestUntil = 0;
+let serpApiRestUntil = 0;
+const QUOTA_KEYWORDS = ["run out", "quota", "exceeded", "limit", "no searches", "insufficient"];
 
-  // 2) Ücretsiz fallback: DuckDuckGo HTML arama (bulut IP'lerinden çoğu zaman engellenir)
+function isQuotaError(status, data) {
+  if (status === 429 || status === 402) return true;
+  const text = JSON.stringify(data || "").toLowerCase();
+  return QUOTA_KEYWORDS.some((k) => text.includes(k));
+}
+
+// Bir arama sonuç linki listesinden (her provider farklı formatta link döndürür,
+// çağıran taraf zaten sade bir url dizisi hazırlar) resmi görünen domain adaylarını
+// çıkarır, sosyal medya/pazar yeri gibi olanları atlar.
+function extractCandidates(urls, sourceName, trace) {
+  const candidates = [];
+  const skipped = [];
+  for (const url of urls) {
+    if (!url) continue;
+    try {
+      const domain = new URL(url).hostname.replace(/^www\./, "");
+      if (!isOfficialLookingDomain(domain)) {
+        skipped.push(domain);
+        continue;
+      }
+      candidates.push({ domain, source: sourceName });
+    } catch (e) {
+      continue;
+    }
+  }
+  if (skipped.length > 0) {
+    trace.push(`${sourceName} sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skipped.join(", ")}`);
+  }
+  return candidates;
+}
+
+function resolveFromCandidates(candidates, sourceName, brandName, trace) {
+  if (candidates.length === 0) return null;
+  trace.push(`${sourceName} adayları: ${candidates.map((c) => c.domain).join(", ")}`);
+  const best = pickBestCandidate(candidates, brandName);
+  if (domainMatchesBrand(best.domain, brandName)) {
+    trace.push(`${sourceName} ile bulundu (marka adıyla örtüşüyor): ${best.domain}`);
+  } else {
+    trace.push(`${sourceName}'dan bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${best.domain}`);
+  }
+  return best.domain;
+}
+
+// Serper.dev — SerpAPI ile aynı işi (Google arama sonuçlarından resmi site bulma)
+// çok daha düşük dolar/arama maliyetiyle yapan alternatif sağlayıcı. Tanımlıysa
+// SerpAPI'den önce denenir (daha ucuz olduğu için kotayı burada tüketmek mantıklı).
+async function searchViaSerper(brandName, trace) {
+  if (!process.env.SERPER_API_KEY) {
+    trace.push("SERPER_API_KEY tanımlı değil, atlandı.");
+    return null;
+  }
+  const resting = Date.now() < serperRestUntil;
+  if (resting) {
+    trace.push("Serper.dev kotası yakın zamanda bittiği için bu marka için atlanıyor.");
+    return null;
+  }
+  try {
+    const { data, status } = await httpClient.post(
+      "https://google.serper.dev/search",
+      { q: `${brandName} official website` },
+      { headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" } }
+    );
+    if (isQuotaError(status, data)) {
+      serperRestUntil = Date.now() + 60 * 60 * 1000;
+      trace.push(`Serper.dev kotası bitmiş görünüyor (HTTP ${status}), 1 saat boyunca atlanacak.`);
+      return null;
+    }
+    if (status !== 200) {
+      trace.push(`Serper.dev HTTP ${status}: ${JSON.stringify(data).slice(0, 200)}`);
+      return null;
+    }
+    const results = data.organic || [];
+    if (results.length === 0) {
+      trace.push("Serper.dev 200 döndü ama organic sonuç boş.");
+      return null;
+    }
+    const candidates = extractCandidates(results.map((r) => r.link), "Serper.dev", trace);
+    return resolveFromCandidates(candidates, "Serper.dev", brandName, trace);
+  } catch (e) {
+    trace.push(`Serper.dev istek hatası: ${e.message}`);
+    return null;
+  }
+}
+
+async function searchViaSerpApi(brandName, trace) {
+  if (!process.env.SERPAPI_KEY) {
+    trace.push("SERPAPI_KEY tanımlı değil, atlandı.");
+    return null;
+  }
+  const resting = Date.now() < serpApiRestUntil;
+  if (resting) {
+    trace.push("SerpAPI kotası yakın zamanda bittiği için bu marka için atlanıyor.");
+    return null;
+  }
+  try {
+    const { data, status } = await httpClient.get("https://serpapi.com/search.json", {
+      params: {
+        q: `${brandName} official website`,
+        api_key: process.env.SERPAPI_KEY,
+        num: 10,
+      },
+    });
+    if (isQuotaError(status, data)) {
+      serpApiRestUntil = Date.now() + 60 * 60 * 1000;
+      trace.push(`SerpAPI kotası bitmiş görünüyor (HTTP ${status}), 1 saat boyunca atlanacak.`);
+      return null;
+    }
+    if (status !== 200) {
+      trace.push(`SerpAPI HTTP ${status}: ${JSON.stringify(data).slice(0, 200)}`);
+      return null;
+    }
+    if (data.error) {
+      trace.push(`SerpAPI hata döndürdü: ${data.error}`);
+      return null;
+    }
+    const results = data.organic_results || [];
+    if (results.length === 0) {
+      trace.push("SerpAPI 200 döndü ama organic_results boş.");
+      return null;
+    }
+    const candidates = extractCandidates(results.map((r) => r.link), "SerpAPI", trace);
+    return resolveFromCandidates(candidates, "SerpAPI", brandName, trace);
+  } catch (e) {
+    trace.push(`SerpAPI istek hatası: ${e.message}`);
+    return null;
+  }
+}
+
+async function findOfficialDomainViaSearch(brandName, trace) {
+  // 1) Serper.dev (tanımlıysa, dolar başına en verimli seçenek)
+  const viaSerper = await searchViaSerper(brandName, trace);
+  if (viaSerper) return viaSerper;
+
+  // 2) SerpAPI (tanımlıysa)
+  const viaSerpApi = await searchViaSerpApi(brandName, trace);
+  if (viaSerpApi) return viaSerpApi;
+
+  // 3) Ücretsiz fallback: DuckDuckGo HTML arama (bulut IP'lerinden çoğu zaman engellenir)
   try {
     const { data, status } = await httpClient.get("https://html.duckduckgo.com/html/", {
       params: { q: `${brandName} official website` },
@@ -289,7 +377,7 @@ async function findOfficialDomainViaSearch(brandName, trace) {
     trace.push(`DuckDuckGo istek hatası: ${e.message}`);
   }
 
-  // 3) Son çare: marka adından direkt domain tahmini
+  // 4) Son çare: marka adından direkt domain tahmini
   const guess = brandName
     .toLowerCase()
     .normalize("NFD")

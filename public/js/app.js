@@ -15,6 +15,30 @@ const previewTo = document.getElementById("previewTo");
 const previewSubject = document.getElementById("previewSubject");
 const previewBody = document.getElementById("previewBody");
 
+// bodyInput/previewBody artık textarea değil, contenteditable bir "rich text" kutusu
+// (kalın/italik/liste destekler, başka bir yerden yapıştırılan biçimlendirmeyi korur).
+// Toolbar butonları tarayıcının yerleşik execCommand'ıyla çalışır.
+function wireRichTextToolbars() {
+  document.querySelectorAll(".rte-toolbar").forEach((toolbar) => {
+    const editor = document.getElementById(toolbar.dataset.target);
+    if (!editor) return;
+    toolbar.querySelectorAll(".rte-btn").forEach((btn) => {
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault(); // odağın/imlecin editörden çıkmasını engelle
+        editor.focus();
+        document.execCommand(btn.dataset.cmd, false, null);
+      });
+    });
+  });
+}
+
+// Spam kelime kontrolü gibi düz metin analizleri için HTML etiketlerinden arındırılmış hali.
+function richTextToPlain(html) {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html || "";
+  return tmp.textContent || tmp.innerText || "";
+}
+
 function badge(status) {
   const map = {
     pending: "Bekliyor",
@@ -152,7 +176,8 @@ function attachRowEvents() {
       const brand = brands.find((b) => String(b.id) === btn.dataset.id);
       if (!brand || !brand.contact_page_url) return;
       const subject = fillTemplate(subjectInput.value, brand.name);
-      const body = fillTemplate(bodyInput.value, brand.name);
+      // İletişim formları düz metin bekler, HTML biçimlendirmesini panoya kopyalarken çıkarıyoruz.
+      const body = fillTemplate(richTextToPlain(bodyInput.innerHTML), brand.name);
       try {
         await navigator.clipboard.writeText(`Konu: ${subject}\n\n${body}`);
         alert("Mail metni panoya kopyalandı. Açılan iletişim formuna yapıştırabilirsin.");
@@ -225,13 +250,15 @@ function fillTemplate(text, brandName) {
 function openPreview(id) {
   const brand = brands.find((b) => String(b.id) === String(id));
   if (!brand || !brand.email) return alert("Bu markanın e-mail adresi yok.");
-  if (!subjectInput.value || !bodyInput.value) return alert("Önce 4. adımdaki mail şablonunu doldur.");
+  if (!subjectInput.value || !richTextToPlain(bodyInput.innerHTML).trim()) {
+    return alert("Önce 4. adımdaki mail şablonunu doldur.");
+  }
 
   previewBrandId = id;
   previewTitle.textContent = `${brand.name} için mail önizleme`;
   previewTo.value = brand.email;
   previewSubject.value = fillTemplate(subjectInput.value, brand.name);
-  previewBody.value = fillTemplate(bodyInput.value, brand.name);
+  previewBody.innerHTML = fillTemplate(bodyInput.innerHTML, brand.name);
   previewOverlay.style.display = "flex";
 }
 
@@ -246,8 +273,8 @@ async function sendToBrand(id, overrideSubject, overrideBody) {
   const brand = brands.find((b) => String(b.id) === String(id));
   if (!brand || !brand.email) return alert("Bu markanın e-mail adresi yok.");
   const subject = overrideSubject !== undefined ? overrideSubject : fillTemplate(subjectInput.value, brand.name);
-  const body = overrideBody !== undefined ? overrideBody : fillTemplate(bodyInput.value, brand.name);
-  if (!subject || !body) return alert("Önce mail şablonunu doldur.");
+  const body = overrideBody !== undefined ? overrideBody : fillTemplate(bodyInput.innerHTML, brand.name);
+  if (!subject || !richTextToPlain(body).trim()) return alert("Önce mail şablonunu doldur.");
 
   const res = await fetch(`/api/brands/${id}/send`, {
     method: "POST",
@@ -282,10 +309,12 @@ async function loadSettings() {
   // Mail şablonu artık sunucuda (settings tablosunda) tutuluyor — böylece otomatik
   // günlük gönderim (server tarafındaki cron) da aynı şablona erişebiliyor. Eskiden
   // sadece tarayıcıda (localStorage) tutuluyordu, cron bunu göremiyordu.
+  // Gövde artık HTML (zengin metin) olarak saklanıyor; varsayılan metinde satır
+  // sonları için \n yerine <br> kullanıyoruz ki editörde düzgün görünsün.
   subjectInput.value = s.main_subject || `{{marka}} ile iş birliği teklifi`;
-  bodyInput.value =
+  bodyInput.innerHTML =
     s.main_body ||
-    `Sayın {{marka}} Yetkilisi,\n\n${s.company || "Şirketimiz"} olarak Amazon üzerinde ${s.offer_text || "iş birliği"} konusunda sizinle görüşmek isteriz.\n\n${s.signature || ""}`;
+    `Sayın {{marka}} Yetkilisi,<br><br>${s.company || "Şirketimiz"} olarak Amazon üzerinde ${s.offer_text || "iş birliği"} konusunda sizinle görüşmek isteriz.<br><br>${s.signature || ""}`;
 
   document.getElementById("dailyLimitInput").value = s.daily_send_limit || 0;
 }
@@ -433,7 +462,7 @@ function checkSpamTriggers(subject, body) {
 }
 
 document.getElementById("saveTemplateBtn").addEventListener("click", async () => {
-  const triggers = checkSpamTriggers(subjectInput.value, bodyInput.value);
+  const triggers = checkSpamTriggers(subjectInput.value, richTextToPlain(bodyInput.innerHTML));
   if (triggers.length > 0) {
     const proceed = confirm(
       `Şablonda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\nYine de kaydetmek istiyor musun?`
@@ -443,7 +472,7 @@ document.getElementById("saveTemplateBtn").addEventListener("click", async () =>
   await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ main_subject: subjectInput.value, main_body: bodyInput.value }),
+    body: JSON.stringify({ main_subject: subjectInput.value, main_body: bodyInput.innerHTML }),
   });
   alert("Şablon kaydedildi.");
 });
@@ -508,7 +537,7 @@ selectAllCheckbox.addEventListener("change", () => {
 
 document.getElementById("previewSendBtn").addEventListener("click", async () => {
   if (!previewBrandId) return;
-  await sendToBrand(previewBrandId, previewSubject.value, previewBody.value);
+  await sendToBrand(previewBrandId, previewSubject.value, previewBody.innerHTML);
   closePreview();
 });
 
@@ -518,6 +547,7 @@ previewOverlay.addEventListener("click", (e) => {
   if (e.target === previewOverlay) closePreview();
 });
 
+wireRichTextToolbars();
 loadSettings();
 loadBrands();
 

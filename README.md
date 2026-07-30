@@ -108,6 +108,14 @@ başlayabilirsin, bundan sonrası kalıcı olacak.
      veri göndermesine yol açabilir — bu yüzden son adımı bilerek sana bırakıyoruz.)
 4. **Mail şablonu**: konu ve içerik yaz, `{{marka}}` yazdığın her yer gönderim sırasında
    otomatik marka adıyla değişir.
+   - İçerik kutusu artık zengin metin (rich text) editörü: üstündeki **K / İ / A / Liste /
+     Temizle** butonlarıyla kalın, italik, altı çizili ve liste biçimlendirmesi
+     ekleyebilirsin. Daha önemlisi, Word, Google Docs ya da başka bir e-mailden
+     kopyaladığın bir taslağı doğrudan yapıştırabilirsin — kalın başlıklar, listeler gibi
+     biçimlendirme artık kayboldu değil, korunur. Alıcıya da mail bu biçimlendirmeyle
+     (HTML olarak) gider; HTML gösteremeyen eski mail istemcileri için otomatik olarak
+     düz metin bir alternatif de eklenir. Takip sayfasındaki 3 aşamalı follow-up
+     şablonlarında da aynı zengin metin editörü kullanılır.
 5. **Gönderim**: tabloda her marka satırında e-maili kontrol et/düzelt (otomatik bulma
    %100 garanti değildir), sonra tek tek "Gönder", checkbox'larla seçtiklerine
    "Seçilenleri Gönder", ya da toplu "Bulunan tüm e-maillere gönder" butonunu kullan.

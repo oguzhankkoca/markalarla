@@ -128,6 +128,59 @@ input:focus, textarea:focus, select:focus {
 }
 input:disabled { background: #f1f1f6; color: var(--text-muted); }
 
+/* ---------- Zengin metin (rich text) editörü ---------- */
+/* Mail gövdesi kutuları artık contenteditable — başka bir yerden (Word/Google
+   Docs/başka bir mail) kopyalayıp yapıştırdığında kalın/italik/liste gibi
+   biçimlendirme korunur, düz metin kutusunda olduğu gibi kaybolmaz. */
+.rte-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.rte-btn {
+  background: #eef0f6;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 11px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  min-width: 32px;
+  font-weight: 600;
+}
+.rte-btn:hover { background: #e2e4ee; }
+.rte-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+.rich-editor {
+  width: 100%;
+  min-height: 160px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fbfbfe;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-y: auto;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.rich-editor.small { min-height: 90px; }
+.rich-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: white;
+}
+.rich-editor:empty:before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+}
+.rich-editor b, .rich-editor strong { font-weight: 700; }
+.rich-editor ul, .rich-editor ol { margin: 8px 0; padding-left: 22px; }
+
 /* ---------- Buttons ---------- */
 button {
   background: var(--primary);
@@ -178,7 +231,14 @@ th {
 tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s ease; }
 tbody tr:hover { background: #fafaff; }
 tbody tr:last-child { border-bottom: none; }
-td input, td select { margin: 0; padding: 7px 9px; font-size: 13px; }
+td input, td select {
+  margin: 0;
+  padding: 11px 12px;
+  font-size: 14.5px;
+  min-width: 220px;
+  min-height: 20px;
+}
+td input[type="checkbox"] { min-width: 0; width: auto; padding: 0; }
 
 /* ---------- Misc ---------- */
 .status-line { font-size: 13px; font-weight: 600; }

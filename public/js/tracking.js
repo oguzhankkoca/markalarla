@@ -117,21 +117,42 @@ async function loadFollowupTemplate() {
 
   document.getElementById("followupSubject1").value =
     s.followup_subject || "Re: {{marka}} ile iş birliği teklifi";
-  document.getElementById("followupBody1").value =
+  document.getElementById("followupBody1").innerHTML =
     s.followup_body ||
-    "Merhaba {{marka}} ekibi,\n\nGeçen hafta ilettiğim iş birliği teklifiyle ilgili görüşünüzü almak isterim. Uygun bir zamanda kısa bir görüşme ayarlayabilir miyiz?\n\nSaygılarımla";
+    "Merhaba {{marka}} ekibi,<br><br>Geçen hafta ilettiğim iş birliği teklifiyle ilgili görüşünüzü almak isterim. Uygun bir zamanda kısa bir görüşme ayarlayabilir miyiz?<br><br>Saygılarımla";
 
   document.getElementById("followupSubject2").value =
     s.followup2_subject || "{{marka}} - kısa bir hatırlatma";
-  document.getElementById("followupBody2").value =
+  document.getElementById("followupBody2").innerHTML =
     s.followup2_body ||
-    "Merhaba {{marka}} ekibi,\n\nDaha önce gönderdiğim teklifle ilgili bir güncelleme var mı diye kısaca sormak istedim.\n\nSaygılarımla";
+    "Merhaba {{marka}} ekibi,<br><br>Daha önce gönderdiğim teklifle ilgili bir güncelleme var mı diye kısaca sormak istedim.<br><br>Saygılarımla";
 
   document.getElementById("followupSubject3").value =
     s.followup3_subject || "{{marka}} - son bir kez yazıyorum";
-  document.getElementById("followupBody3").value =
+  document.getElementById("followupBody3").innerHTML =
     s.followup3_body ||
-    "Merhaba {{marka}} ekibi,\n\nBu konuda son kez yazıyorum; şu an için uygun değilse anlayışla karşılarım.\n\nSaygılarımla";
+    "Merhaba {{marka}} ekibi,<br><br>Bu konuda son kez yazıyorum; şu an için uygun değilse anlayışla karşılarım.<br><br>Saygılarımla";
+}
+
+// bodyInput'lar artık contenteditable "rich text" kutuları — toolbar butonları için.
+function wireRichTextToolbars() {
+  document.querySelectorAll(".rte-toolbar").forEach((toolbar) => {
+    const editor = document.getElementById(toolbar.dataset.target);
+    if (!editor) return;
+    toolbar.querySelectorAll(".rte-btn").forEach((btn) => {
+      btn.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        editor.focus();
+        document.execCommand(btn.dataset.cmd, false, null);
+      });
+    });
+  });
+}
+
+function richTextToPlain(html) {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html || "";
+  return tmp.textContent || tmp.innerText || "";
 }
 
 const SPAM_TRIGGER_WORDS = [
@@ -152,20 +173,20 @@ document.getElementById("saveFollowupBtn").addEventListener("click", async () =>
   const payload = {
     stage1: {
       subject: document.getElementById("followupSubject1").value,
-      body: document.getElementById("followupBody1").value,
+      body: document.getElementById("followupBody1").innerHTML,
     },
     stage2: {
       subject: document.getElementById("followupSubject2").value,
-      body: document.getElementById("followupBody2").value,
+      body: document.getElementById("followupBody2").innerHTML,
     },
     stage3: {
       subject: document.getElementById("followupSubject3").value,
-      body: document.getElementById("followupBody3").value,
+      body: document.getElementById("followupBody3").innerHTML,
     },
   };
 
   const allText = [payload.stage1, payload.stage2, payload.stage3]
-    .map((s) => `${s.subject} ${s.body}`)
+    .map((s) => `${s.subject} ${richTextToPlain(s.body)}`)
     .join(" ");
   const triggers = checkSpamTriggers("", allText);
   if (triggers.length > 0) {
@@ -204,5 +225,6 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = "/api/tracking/export";
 });
 
+wireRichTextToolbars();
 loadFollowupTemplate();
 loadTracking();

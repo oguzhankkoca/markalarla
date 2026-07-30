@@ -35,15 +35,36 @@
 
           <h3>1. Aşama (7. gün)</h3>
           <input type="text" id="followupSubject1" placeholder="Konu" />
-          <textarea id="followupBody1" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
+          <div class="rte-toolbar" data-target="followupBody1">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="followupBody1" class="rich-editor small" contenteditable="true" data-placeholder="İçerik. {{marka}} otomatik değişir."></div>
 
           <h3>2. Aşama (14. gün)</h3>
           <input type="text" id="followupSubject2" placeholder="Konu" />
-          <textarea id="followupBody2" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
+          <div class="rte-toolbar" data-target="followupBody2">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="followupBody2" class="rich-editor small" contenteditable="true" data-placeholder="İçerik. {{marka}} otomatik değişir."></div>
 
           <h3>3. Aşama (30. gün / 1 ay, son)</h3>
           <input type="text" id="followupSubject3" placeholder="Konu" />
-          <textarea id="followupBody3" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
+          <div class="rte-toolbar" data-target="followupBody3">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="followupBody3" class="rich-editor small" contenteditable="true" data-placeholder="İçerik. {{marka}} otomatik değişir."></div>
 
           <button id="saveFollowupBtn" class="secondary">Şablonları kaydet</button>
         </div>

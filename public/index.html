@@ -61,7 +61,15 @@
         <div class="card">
           <h2>4️⃣ Mail şablonu</h2>
           <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
-          <textarea id="bodyInput" rows="8" placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></textarea>
+          <p class="muted" style="margin-top:-6px;">Başka bir yerden (Word, Google Docs, başka bir mail) kopyaladığın metni doğrudan aşağıya yapıştırabilirsin — kalın/italik/liste gibi biçimlendirme korunur.</p>
+          <div class="rte-toolbar" data-target="bodyInput">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="bodyInput" class="rich-editor" contenteditable="true" data-placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></div>
           <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
         </div>
 
@@ -116,7 +124,14 @@
       <label class="muted">Konu</label>
       <input type="text" id="previewSubject" />
       <label class="muted">İçerik</label>
-      <textarea id="previewBody" rows="10"></textarea>
+      <div class="rte-toolbar" data-target="previewBody">
+        <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+        <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+        <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+        <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+        <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+      </div>
+      <div id="previewBody" class="rich-editor" contenteditable="true"></div>
       <div class="toolbar">
         <button id="previewSendBtn">Gönder</button>
         <button id="previewCancelBtn" class="secondary">İptal</button>

@@ -8,7 +8,11 @@
 <body>
   <div class="topbar">
     <strong>Marka Outreach Paneli</strong>
-    <span id="emailStatus" class="status-line"></span>
+    <div>
+      <a href="/analytics.html" style="font-size:13px; margin-right:12px;">Özet</a>
+      <a href="/tracking.html" style="font-size:13px; margin-right:12px;">Gönderim Takibi &rarr;</a>
+      <span id="emailStatus" class="status-line"></span>
+    </div>
   </div>
 
   <div class="container">
@@ -66,6 +70,23 @@
       </table>
     </div>
 
+  </div>
+
+  <div id="previewOverlay" class="overlay" style="display:none;">
+    <div class="modal">
+      <h2 id="previewTitle">Mail Önizleme</h2>
+      <p class="muted">Göndermeden önce bu markaya özel metni düzenleyebilirsin.</p>
+      <label class="muted">Kime</label>
+      <input type="text" id="previewTo" disabled />
+      <label class="muted">Konu</label>
+      <input type="text" id="previewSubject" />
+      <label class="muted">İçerik</label>
+      <textarea id="previewBody" rows="10"></textarea>
+      <div class="toolbar">
+        <button id="previewSendBtn">Gönder</button>
+        <button id="previewCancelBtn" class="secondary">İptal</button>
+      </div>
+    </div>
   </div>
 
   <script src="/js/app.js"></script>

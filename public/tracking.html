@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>Gönderim Takibi</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <strong>Gönderim Takibi</strong>
+    <div>
+      <a href="/analytics.html" style="font-size:13px; margin-right:12px;">Özet</a>
+      <a href="/index.html" style="font-size:13px;">&larr; Panele dön</a>
+    </div>
+  </div>
+
+  <div class="container">
+
+    <div class="card">
+      <h2>Takip Mail Şablonları (3 aşamalı otomatik takip)</h2>
+      <p class="muted">Yanıt gelmezse gönderim tarihinden itibaren gün 3'te 1. aşama, gün 7'de 2. aşama, gün 14'te 3. aşama otomatik gönderilir.</p>
+
+      <h3>1. Aşama (3. gün)</h3>
+      <input type="text" id="followupSubject1" placeholder="Konu" />
+      <textarea id="followupBody1" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
+
+      <h3>2. Aşama (7. gün)</h3>
+      <input type="text" id="followupSubject2" placeholder="Konu" />
+      <textarea id="followupBody2" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
+
+      <h3>3. Aşama (14. gün, son)</h3>
+      <input type="text" id="followupSubject3" placeholder="Konu" />
+      <textarea id="followupBody3" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
+
+      <button id="saveFollowupBtn" class="secondary">Şablonları kaydet</button>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <button id="checkRepliesBtn">Yanıtları Kontrol Et</button>
+        <button id="exportBtn" class="secondary">Excel'e Aktar</button>
+        <span class="muted" id="checkStatus"></span>
+      </div>
+      <p class="muted">
+        "Yanıtları Kontrol Et" Gmail gelen kutunu kontrol eder: yanıt gelen markaları bulur,
+        olumlu/olumsuz tahmini yapar (olumlu yanıtta sana ayrıca bildirim maili gider) ve zamanı
+        gelen markalara sıradaki takip aşamasını otomatik gönderir. Bu özellik için Gmail
+        hesabında IMAP açık olmalı (Gmail Ayarlar &gt; Yönlendirme ve POP/IMAP &gt; IMAP'i Etkinleştir).
+      </p>
+      <table id="trackingTable">
+        <thead>
+          <tr>
+            <th>Marka</th>
+            <th>Gönderildi</th>
+            <th>Yanıt</th>
+            <th>Takip Aşaması</th>
+            <th>Anlaşma Durumu</th>
+            <th>Not</th>
+          </tr>
+        </thead>
+        <tbody id="trackingBody"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <script src="/js/tracking.js"></script>
+</body>
+</html>

@@ -1,10 +1,17 @@
 let batch = null;
 let brands = [];
+let previewBrandId = null;
 
 const emailStatusEl = document.getElementById("emailStatus");
 const brandsBody = document.getElementById("brandsBody");
 const subjectInput = document.getElementById("subjectInput");
 const bodyInput = document.getElementById("bodyInput");
+
+const previewOverlay = document.getElementById("previewOverlay");
+const previewTitle = document.getElementById("previewTitle");
+const previewTo = document.getElementById("previewTo");
+const previewSubject = document.getElementById("previewSubject");
+const previewBody = document.getElementById("previewBody");
 
 function badge(status) {
   const map = {
@@ -13,6 +20,8 @@ function badge(status) {
     not_found: "Bulunamadı",
     sent: "Gönderildi",
     error: "Hata",
+    duplicate_blocked: "Tekrar (Engellendi)",
+    bounced: "Geri Döndü",
   };
   return `<span class="badge ${status}">${map[status] || status}</span>`;
 }
@@ -28,7 +37,7 @@ function renderBrands() {
       <td>${badge(b.status)}</td>
       <td>
         <button class="small find-btn" data-id="${b.id}">Ara</button>
-        <button class="small send-btn" data-id="${b.id}" ${!b.email ? "disabled" : ""}>Gönder</button>
+        <button class="small send-btn" data-id="${b.id}" ${!b.email || b.status === "duplicate_blocked" ? "disabled" : ""}>Gönder</button>
         <button class="small secondary detail-btn" data-id="${b.id}">Detay</button>
       </td>
     `;
@@ -68,7 +77,7 @@ function attachRowEvents() {
   });
 
   document.querySelectorAll(".send-btn").forEach((btn) => {
-    btn.addEventListener("click", () => sendToBrand(btn.dataset.id));
+    btn.addEventListener("click", () => openPreview(btn.dataset.id));
   });
 
   document.querySelectorAll(".detail-btn").forEach((btn) => {
@@ -84,11 +93,32 @@ function fillTemplate(text, brandName) {
   return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
 }
 
-async function sendToBrand(id) {
+// Gönderme öncesi bu markaya özel doldurulmuş metni önizleme/düzenleme penceresinde göster
+function openPreview(id) {
   const brand = brands.find((b) => String(b.id) === String(id));
   if (!brand || !brand.email) return alert("Bu markanın e-mail adresi yok.");
-  const subject = fillTemplate(subjectInput.value, brand.name);
-  const body = fillTemplate(bodyInput.value, brand.name);
+  if (!subjectInput.value || !bodyInput.value) return alert("Önce 4. adımdaki mail şablonunu doldur.");
+
+  previewBrandId = id;
+  previewTitle.textContent = `${brand.name} için mail önizleme`;
+  previewTo.value = brand.email;
+  previewSubject.value = fillTemplate(subjectInput.value, brand.name);
+  previewBody.value = fillTemplate(bodyInput.value, brand.name);
+  previewOverlay.style.display = "flex";
+}
+
+function closePreview() {
+  previewOverlay.style.display = "none";
+  previewBrandId = null;
+}
+
+// Gerçek gönderim isteği. subject/body verilmezse global şablondan doldurur
+// (toplu gönderimde önizleme açmadan hızlıca kullanılır).
+async function sendToBrand(id, overrideSubject, overrideBody) {
+  const brand = brands.find((b) => String(b.id) === String(id));
+  if (!brand || !brand.email) return alert("Bu markanın e-mail adresi yok.");
+  const subject = overrideSubject !== undefined ? overrideSubject : fillTemplate(subjectInput.value, brand.name);
+  const body = overrideBody !== undefined ? overrideBody : fillTemplate(bodyInput.value, brand.name);
   if (!subject || !body) return alert("Önce mail şablonunu doldur.");
 
   const res = await fetch(`/api/brands/${id}/send`, {
@@ -126,7 +156,7 @@ async function loadSettings() {
   subjectInput.value = savedSubject || `{{marka}} ile iş birliği teklifi`;
   bodyInput.value =
     savedBody ||
-    `Merhaba {{marka}} ekibi,\n\n${s.company || "Şirketimiz"} olarak Amazon üzerinde ${s.offer_text || "iş birliği"} konusunda sizinle görüşmek isteriz.\n\n${s.signature || ""}`;
+    `Sayın {{marka}} Yetkilisi,\n\n${s.company || "Şirketimiz"} olarak Amazon üzerinde ${s.offer_text || "iş birliği"} konusunda sizinle görüşmek isteriz.\n\n${s.signature || ""}`;
 }
 
 async function loadBrands() {
@@ -164,7 +194,10 @@ document.getElementById("uploadBtn").addEventListener("click", async () => {
     document.getElementById("uploadStatus").textContent = "Hata: " + data.error;
     return;
   }
-  document.getElementById("uploadStatus").textContent = `${data.count} marka yüklendi.`;
+  let msg = `${data.count} marka yüklendi.`;
+  if (data.duplicateBlockedCount) msg += ` ${data.duplicateBlockedCount} tanesi daha önce gönderilmiş/olumsuzdu, otomatik işlemlerden hariç tutuldu.`;
+  if (data.reusedEmailCount) msg += ` ${data.reusedEmailCount} tanesi için önceden bulunan e-mail kullanıldı.`;
+  document.getElementById("uploadStatus").textContent = msg;
   brands = data.brands;
   batch = data.batch;
   renderBrands();
@@ -197,7 +230,9 @@ document.getElementById("saveTemplateBtn").addEventListener("click", () => {
 });
 
 document.getElementById("sendAllBtn").addEventListener("click", async () => {
-  const targets = brands.filter((b) => b.email && b.status !== "sent");
+  const targets = brands.filter(
+    (b) => b.email && !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+  );
   if (targets.length === 0) return alert("Gönderilecek e-mail yok.");
   if (!confirm(`${targets.length} markaya mail gönderilecek. Onaylıyor musun?`)) return;
   document.getElementById("sendStatus").textContent = `0/${targets.length}`;
@@ -209,6 +244,18 @@ document.getElementById("sendAllBtn").addEventListener("click", async () => {
     await new Promise((r) => setTimeout(r, 1500));
   }
   document.getElementById("sendStatus").textContent = "Tamamlandı.";
+});
+
+document.getElementById("previewSendBtn").addEventListener("click", async () => {
+  if (!previewBrandId) return;
+  await sendToBrand(previewBrandId, previewSubject.value, previewBody.value);
+  closePreview();
+});
+
+document.getElementById("previewCancelBtn").addEventListener("click", closePreview);
+
+previewOverlay.addEventListener("click", (e) => {
+  if (e.target === previewOverlay) closePreview();
 });
 
 loadSettings();

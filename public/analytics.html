@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>Özet / Analitik</title>
+<link rel="stylesheet" href="/css/style.css" />
+<style>
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+  .stat-card { background: #f9fafb; border-radius: 10px; padding: 16px; text-align: center; }
+  .stat-number { font-size: 28px; font-weight: 700; color: #111827; }
+  .stat-label { font-size: 12px; color: #6b7280; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <strong>Özet / Analitik</strong>
+    <a href="/index.html" style="font-size:13px;">&larr; Panele dön</a>
+  </div>
+
+  <div class="container">
+
+    <div class="card">
+      <h2>Genel Durum</h2>
+      <div class="stat-grid" id="mainStats"></div>
+    </div>
+
+    <div class="card">
+      <h2>Oranlar</h2>
+      <div class="stat-grid" id="rateStats"></div>
+    </div>
+
+    <div class="card">
+      <h2>Anlaşma Aşamaları (gönderilenler arasında)</h2>
+      <div class="stat-grid" id="dealStats"></div>
+    </div>
+
+  </div>
+
+  <script src="/js/analytics.js"></script>
+</body>
+</html>

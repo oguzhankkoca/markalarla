@@ -29,21 +29,71 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
     if (!nameKey) return res.status(400).json({ error: "Marka adı sütunu bulunamadı." });
 
     const batch = crypto.randomUUID();
-    const insert = db.prepare(
-      "INSERT INTO brands (batch, name, website, status) VALUES (?, ?, ?, 'pending')"
+    const findExisting = db.prepare(
+      "SELECT * FROM brands WHERE name_normalized = ? ORDER BY id DESC LIMIT 1"
     );
+    const insert = db.prepare(
+      `INSERT INTO brands (batch, name, name_normalized, website, email, email_source, confidence, status, last_error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    let duplicateBlockedCount = 0;
+    let reusedEmailCount = 0;
+
     const insertMany = db.transaction((items) => {
       for (const item of items) {
         const name = String(item[nameKey] || "").trim();
         if (!name) continue;
-        const website = websiteKey ? String(item[websiteKey] || "").trim() : "";
-        insert.run(batch, name, website);
+        const nameNorm = name.toLowerCase();
+        let website = websiteKey ? String(item[websiteKey] || "").trim() : "";
+
+        const existing = findExisting.get(nameNorm);
+
+        let status = "pending";
+        let email = null;
+        let emailSource = null;
+        let confidence = "unknown";
+        let lastError = null;
+
+        if (existing) {
+          if (!website && existing.website) website = existing.website;
+
+          const wasSent = existing.status === "sent";
+          const wasNegative = existing.reply_sentiment === "negative";
+          const wasRejected = existing.deal_stage === "rejected";
+
+          if (wasSent || wasNegative || wasRejected) {
+            status = "duplicate_blocked";
+            const reasons = [];
+            if (wasSent) reasons.push(`daha önce ${existing.sent_at || "bilinmeyen bir tarihte"} gönderildi`);
+            if (wasNegative) reasons.push("olumsuz yanıt vermişti");
+            if (wasRejected) reasons.push("reddedildi olarak işaretlenmişti");
+            lastError = `Bu marka ${reasons.join(", ")}. Otomatik arama/gönderimden hariç tutuldu; istersen tabloda elle düzenleyip devam edebilirsin.`;
+            duplicateBlockedCount++;
+          } else if (existing.email) {
+            // Önceki aramadan e-mail'i miras al, tekrar aramaya gerek yok
+            email = existing.email;
+            emailSource = existing.email_source;
+            confidence = existing.confidence;
+            status = "found";
+            reusedEmailCount++;
+          }
+        }
+
+        insert.run(batch, name, nameNorm, website, email, emailSource, confidence, status, lastError);
       }
     });
     insertMany(rows);
 
     const brands = db.prepare("SELECT * FROM brands WHERE batch = ? ORDER BY id").all(batch);
-    res.json({ ok: true, batch, count: brands.length, brands });
+    res.json({
+      ok: true,
+      batch,
+      count: brands.length,
+      brands,
+      duplicateBlockedCount,
+      reusedEmailCount,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Dosya işlenirken hata oluştu: " + err.message });
@@ -99,7 +149,9 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
 router.post("/api/brands/find-all", async (req, res) => {
   const { batch } = req.body;
   const brands = db
-    .prepare("SELECT * FROM brands WHERE batch = ? AND status != 'sent'")
+    .prepare(
+      "SELECT * FROM brands WHERE batch = ? AND status NOT IN ('sent', 'duplicate_blocked', 'bounced')"
+    )
     .all(batch);
 
   res.json({ ok: true, queued: brands.length });

@@ -24,6 +24,35 @@ const BAD_DOMAINS = [
   "schema.org",
 ];
 
+// Arama sonuçlarında markanın kendi sitesi yerine sıkça çıkan sosyal medya /
+// pazar yeri / ansiklopedi siteleri — bunlar "resmi site" olarak kabul edilmez,
+// çünkü üzerlerinde markaya ait bir e-mail bulunmaz.
+const NON_OFFICIAL_DOMAINS = [
+  "instagram.com",
+  "facebook.com",
+  "twitter.com",
+  "x.com",
+  "linkedin.com",
+  "youtube.com",
+  "tiktok.com",
+  "pinterest.com",
+  "amazon.com",
+  "amazon.com.tr",
+  "ebay.com",
+  "wikipedia.org",
+  "trendyol.com",
+  "hepsiburada.com",
+  "yelp.com",
+  "crunchbase.com",
+  "bloomberg.com",
+  "glassdoor.com",
+  "indeed.com",
+];
+
+function isOfficialLookingDomain(domain) {
+  return !NON_OFFICIAL_DOMAINS.some((bad) => domain === bad || domain.endsWith(`.${bad}`));
+}
+
 const httpClient = axios.create({
   timeout: 10000,
   headers: {
@@ -68,7 +97,7 @@ async function findOfficialDomainViaSearch(brandName, trace) {
         params: {
           q: `${brandName} official website`,
           api_key: process.env.SERPAPI_KEY,
-          num: 5,
+          num: 10,
         },
       });
       if (status !== 200) {
@@ -80,12 +109,20 @@ async function findOfficialDomainViaSearch(brandName, trace) {
         if (results.length === 0) {
           trace.push("SerpAPI 200 döndü ama organic_results boş.");
         }
+        let skipped = [];
         for (const r of results) {
           if (r.link) {
             const domain = new URL(r.link).hostname.replace(/^www\./, "");
+            if (!isOfficialLookingDomain(domain)) {
+              skipped.push(domain);
+              continue;
+            }
             trace.push(`SerpAPI ile bulundu: ${domain}`);
             return domain;
           }
+        }
+        if (skipped.length > 0) {
+          trace.push(`SerpAPI sonuçları sosyal medya/pazar yeriydi, atlandı: ${skipped.join(", ")}`);
         }
       }
     } catch (e) {
@@ -101,15 +138,31 @@ async function findOfficialDomainViaSearch(brandName, trace) {
       params: { q: `${brandName} official website` },
     });
     const $ = cheerio.load(data);
-    const link = $(".result__a").first().attr("href");
-    if (link) {
+    const links = $(".result__a")
+      .map((_, el) => $(el).attr("href"))
+      .get();
+    let skippedDdg = [];
+    for (const link of links) {
+      if (!link) continue;
       const urlMatch = link.match(/uddg=([^&]+)/);
       const target = urlMatch ? decodeURIComponent(urlMatch[1]) : link;
-      const domain = new URL(target).hostname.replace(/^www\./, "");
-      trace.push(`DuckDuckGo ile bulundu: ${domain}`);
-      return domain;
+      try {
+        const domain = new URL(target).hostname.replace(/^www\./, "");
+        if (!isOfficialLookingDomain(domain)) {
+          skippedDdg.push(domain);
+          continue;
+        }
+        trace.push(`DuckDuckGo ile bulundu: ${domain}`);
+        return domain;
+      } catch (e) {
+        continue;
+      }
     }
-    trace.push(`DuckDuckGo yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
+    if (skippedDdg.length > 0) {
+      trace.push(`DuckDuckGo sonuçları sosyal medya/pazar yeriydi, atlandı: ${skippedDdg.join(", ")}`);
+    } else {
+      trace.push(`DuckDuckGo yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
+    }
   } catch (e) {
     trace.push(`DuckDuckGo istek hatası: ${e.message}`);
   }

@@ -182,15 +182,27 @@ async function scrapePageForEmails(url, trace) {
   }
 }
 
+// Excel'deki "website" sütunu bazen gerçek bir link değil, bir buton/link etiketi
+// (örn. "Web Sitesi Ara") ya da başka bir metin içerebilir. Bunu gerçek bir
+// domain'den ayırt etmek için basit bir doğrulama yapıyoruz: boşluk içermemeli,
+// en az bir nokta içermeli ve sadece domain'de geçerli karakterlerden oluşmalı.
+function looksLikeDomain(value) {
+  if (!value) return false;
+  const cleaned = value.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(cleaned);
+}
+
 async function findBrandEmail(brandName, providedWebsite) {
   const trace = [];
-  let domain = providedWebsite
-    ? providedWebsite.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]
-    : null;
+  let domain = null;
 
-  if (domain) {
+  if (providedWebsite && looksLikeDomain(providedWebsite)) {
+    domain = providedWebsite.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
     trace.push(`Excel'den verilen website kullanıldı: ${domain}`);
   } else {
+    if (providedWebsite) {
+      trace.push(`Excel'deki website değeri geçerli bir domain gibi görünmüyor ("${providedWebsite}"), aramaya geçiliyor.`);
+    }
     domain = await findOfficialDomainViaSearch(brandName, trace);
   }
 

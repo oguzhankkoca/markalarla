@@ -53,7 +53,6 @@ function cleanEmails(rawEmails, domain) {
       generic: GENERIC_LOCAL_PARTS.includes(email.split("@")[0]),
     });
   }
-  // Öncelik: aynı domain + generic olmayan > aynı domain > generic > diğer
   list.sort((a, b) => {
     const score = (x) => (x.sameDomain ? 2 : 0) + (!x.generic ? 1 : 0);
     return score(b) - score(a);
@@ -62,7 +61,6 @@ function cleanEmails(rawEmails, domain) {
 }
 
 async function findOfficialDomainViaSearch(brandName) {
-  // 1) SerpAPI varsa (en güvenilir)
   if (process.env.SERPAPI_KEY) {
     try {
       const { data } = await httpClient.get("https://serpapi.com/search.json", {
@@ -76,26 +74,50 @@ async function findOfficialDomainViaSearch(brandName) {
       for (const r of results) {
         if (r.link) return new URL(r.link).hostname.replace(/^www\./, "");
       }
+      console.log(`[${brandName}] SerpAPI sonuç döndürmedi.`);
     } catch (e) {
-      console.error("SerpAPI hata:", e.message);
+      console.error(`[${brandName}] SerpAPI hata:`, e.message);
     }
   }
 
-  // 2) Ücretsiz fallback: DuckDuckGo HTML arama
   try {
-    const { data } = await httpClient.get("https://html.duckduckgo.com/html/", {
+    const { data, status } = await httpClient.get("https://html.duckduckgo.com/html/", {
       params: { q: `${brandName} official website` },
     });
+    console.log(`[${brandName}] DuckDuckGo yanıt kodu: ${status}`);
     const $ = cheerio.load(data);
     const link = $(".result__a").first().attr("href");
     if (link) {
       const urlMatch = link.match(/uddg=([^&]+)/);
       const target = urlMatch ? decodeURIComponent(urlMatch[1]) : link;
-      return new URL(target).hostname.replace(/^www\./, "");
+      const domain = new URL(target).hostname.replace(/^www\./, "");
+      console.log(`[${brandName}] DuckDuckGo'dan bulunan domain: ${domain}`);
+      return domain;
     }
+    console.log(`[${brandName}] DuckDuckGo sonuç linki bulunamadı (muhtemelen bot engeli/CAPTCHA).`);
   } catch (e) {
-    console.error("DuckDuckGo arama hatası:", e.message);
+    console.error(`[${brandName}] DuckDuckGo arama hatası:`, e.message);
   }
+
+  const guess = brandName
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (guess) {
+    const guessedDomain = `${guess}.com`;
+    try {
+      const { status } = await httpClient.get(`https://${guessedDomain}`, { timeout: 6000 });
+      if (status < 400) {
+        console.log(`[${brandName}] Tahmin edilen domain çalışıyor: ${guessedDomain}`);
+        return guessedDomain;
+      }
+      console.log(`[${brandName}] Tahmin edilen domain (${guessedDomain}) yanıt kodu: ${status}`);
+    } catch (e) {
+      console.log(`[${brandName}] Tahmin edilen domain (${guessedDomain}) çalışmadı: ${e.message}`);
+    }
+  }
+
   return null;
 }
 
@@ -146,7 +168,6 @@ async function findBrandEmail(brandName, providedWebsite) {
 
   const website = `https://${domain}`;
 
-  // Hunter.io varsa direkt oradan dene
   const hunterEmails = await findEmailsViaHunter(domain);
   if (hunterEmails.length > 0) {
     const cleaned = cleanEmails(hunterEmails, domain);
@@ -160,14 +181,13 @@ async function findBrandEmail(brandName, providedWebsite) {
     }
   }
 
-  // Ücretsiz fallback: siteyi ve tipik iletişim sayfalarını tara
   const pathsToTry = ["", "/contact", "/contact-us", "/iletisim", "/about", "/hakkimizda"];
   let allEmails = [];
   for (const p of pathsToTry) {
     const emails = await scrapePageForEmails(website + p);
     allEmails = allEmails.concat(emails);
     await sleep(300);
-    if (allEmails.length > 0 && p !== "") break; // bir tanesinde bulduysak yeter
+    if (allEmails.length > 0 && p !== "") break;
   }
 
   const cleaned = cleanEmails(allEmails, domain);

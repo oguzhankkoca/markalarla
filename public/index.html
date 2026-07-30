@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>Marka Outreach Paneli</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="topbar">
+    <strong>Marka Outreach Paneli</strong>
+    <span id="emailStatus" class="status-line"></span>
+  </div>
+
+  <div class="container">
+
+    <div class="card">
+      <h2>1. Bilgilerin (mail imzası için)</h2>
+      <input type="text" id="settingsName" placeholder="Adın soyadın" />
+      <input type="text" id="settingsCompany" placeholder="Şirket adın" />
+      <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
+      <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
+      <button id="saveSettingsBtn" class="secondary">Kaydet</button>
+    </div>
+
+    <div class="card">
+      <h2>2. Marka listesi yükle (Excel/CSV)</h2>
+      <p class="muted">Dosyada marka adlarının olduğu bir sütun olmalı (örn: "Marka", "Brand"). İsteğe bağlı web sitesi sütunu da ekleyebilirsin.</p>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+      <button id="uploadBtn">Yükle</button>
+      <span class="muted" id="uploadStatus"></span>
+    </div>
+
+    <div class="card">
+      <h2>3. E-mail bulma</h2>
+      <div class="toolbar">
+        <button id="findAllBtn">Tüm markalar için email ara</button>
+        <span class="muted" id="findStatus"></span>
+      </div>
+      <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt.</p>
+    </div>
+
+    <div class="card">
+      <h2>4. Mail şablonu</h2>
+      <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
+      <textarea id="bodyInput" rows="8" placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></textarea>
+      <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
+    </div>
+
+    <div class="card">
+      <h2>5. Markalar ve gönderim</h2>
+      <div class="toolbar">
+        <button id="sendAllBtn">Bulunan tüm e-maillere gönder</button>
+        <span class="muted" id="sendStatus"></span>
+      </div>
+      <table id="brandsTable">
+        <thead>
+          <tr>
+            <th>Marka</th>
+            <th>Website</th>
+            <th>E-mail</th>
+            <th>Durum</th>
+            <th>İşlem</th>
+          </tr>
+        </thead>
+        <tbody id="brandsBody"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

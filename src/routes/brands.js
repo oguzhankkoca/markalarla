@@ -18,6 +18,7 @@ function guessColumns(rows) {
   return { nameKey, websiteKey };
 }
 
+// Excel/CSV yükle -> yeni bir "batch" olarak markaları kaydet
 router.post("/api/brands/upload", upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Dosya bulunamadı." });
   try {
@@ -49,6 +50,7 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
   }
 });
 
+// En son yüklenen listeyi getir
 router.get("/api/brands", (req, res) => {
   const lastBatchRow = db
     .prepare("SELECT batch FROM brands ORDER BY id DESC LIMIT 1")
@@ -60,6 +62,7 @@ router.get("/api/brands", (req, res) => {
   res.json({ brands, batch: lastBatchRow.batch });
 });
 
+// Tek bir marka için email arat
 router.post("/api/brands/:id/find-email", async (req, res) => {
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
@@ -90,6 +93,9 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
   }
 });
 
+// Tüm liste için toplu email arama (arka planda sırayla)
+// status='sent' olanlar hariç hepsini (pending/not_found/error) tekrar dener,
+// böylece ilk denemede bulunamayanlar "Tekrar Ara" ile yeniden denenebilir.
 router.post("/api/brands/find-all", async (req, res) => {
   const { batch } = req.body;
   const brands = db
@@ -124,6 +130,7 @@ router.post("/api/brands/find-all", async (req, res) => {
   })();
 });
 
+// Marka bilgisini manuel düzenle (email/website)
 router.put("/api/brands/:id", (req, res) => {
   const { email, website, status } = req.body;
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
@@ -138,6 +145,7 @@ router.put("/api/brands/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// Tek markaya mail gönder
 router.post("/api/brands/:id/send", async (req, res) => {
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });

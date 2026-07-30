@@ -29,6 +29,7 @@ function renderBrands() {
       <td>
         <button class="small find-btn" data-id="${b.id}">Ara</button>
         <button class="small send-btn" data-id="${b.id}" ${!b.email ? "disabled" : ""}>Gönder</button>
+        <button class="small secondary detail-btn" data-id="${b.id}">Detay</button>
       </td>
     `;
     brandsBody.appendChild(tr);
@@ -68,6 +69,14 @@ function attachRowEvents() {
 
   document.querySelectorAll(".send-btn").forEach((btn) => {
     btn.addEventListener("click", () => sendToBrand(btn.dataset.id));
+  });
+
+  document.querySelectorAll(".detail-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const brand = brands.find((b) => String(b.id) === btn.dataset.id);
+      const steps = (brand.last_error || "Henüz aranmadı.").split(" | ").join("\n");
+      alert(`${brand.name} için yapılan adımlar:\n\n${steps}`);
+    });
   });
 }
 

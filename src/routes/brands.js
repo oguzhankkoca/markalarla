@@ -67,7 +67,7 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
   try {
     const result = await findBrandEmail(brand.name, brand.website);
     db.prepare(
-      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?
+      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?
        WHERE id = ?`
     ).run(
       result.email,
@@ -75,6 +75,7 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
       result.source,
       result.confidence,
       result.email ? "found" : "not_found",
+      (result.trace || []).join(" | "),
       brand.id
     );
     const updated = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
@@ -102,7 +103,7 @@ router.post("/api/brands/find-all", async (req, res) => {
       try {
         const result = await findBrandEmail(brand.name, brand.website);
         db.prepare(
-          `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?
+          `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?
            WHERE id = ?`
         ).run(
           result.email,
@@ -110,6 +111,7 @@ router.post("/api/brands/find-all", async (req, res) => {
           result.source,
           result.confidence,
           result.email ? "found" : "not_found",
+          (result.trace || []).join(" | "),
           brand.id
         );
       } catch (err) {

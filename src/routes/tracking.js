@@ -8,9 +8,9 @@ const router = express.Router();
 
 // 3 aşamalı takip: gönderimden şu kadar gün sonra sırayla gönderilir
 const FOLLOW_UP_SCHEDULE = [
-  { stage: 1, afterDays: 3 },
-  { stage: 2, afterDays: 7 },
-  { stage: 3, afterDays: 14 },
+  { stage: 1, afterDays: 7 },
+  { stage: 2, afterDays: 14 },
+  { stage: 3, afterDays: 30 },
 ];
 
 const DEAL_STAGES = ["new", "meeting_scheduled", "sample_sent", "deal_closed", "rejected"];
@@ -243,6 +243,17 @@ router.put("/api/tracking/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// Bir markaya ait tüm gönderim/takip geçmişini (ilk gönderim, her follow-up aşaması,
+// hatalar) kronolojik sırayla döner — "kaçıncı takibi ne zaman attık" sorusuna cevap.
+router.get("/api/tracking/:id/history", (req, res) => {
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
+  const logs = db
+    .prepare("SELECT * FROM send_log WHERE brand_id = ? ORDER BY created_at ASC")
+    .all(brand.id);
+  res.json({ brand: { id: brand.id, name: brand.name }, logs });
+});
+
 // Tüm marka + durum verisini Excel olarak indir
 router.get("/api/tracking/export", (req, res) => {
   const brands = db.prepare("SELECT * FROM brands ORDER BY id").all();
@@ -253,12 +264,17 @@ router.get("/api/tracking/export", (req, res) => {
     Email: b.email || "",
     Durum: b.status,
     "Gönderim Tarihi": b.sent_at || "",
+    "Gönderim Yöntemi": b.sent_via === "contact_form" ? "İletişim Formu" : b.sent_at ? "E-mail" : "",
     "Yanıt Geldi mi": b.replied ? "Evet" : "Hayır",
     "Yanıt Tonu": b.reply_sentiment || "",
     "Yanıt Özeti": b.reply_snippet || "",
     "Takip Aşaması": b.follow_up_stage || 0,
     "Anlaşma Aşaması": b.deal_stage || "new",
     "Geri Döndü mü": b.bounced ? "Evet" : "Hayır",
+    "Marka Skoru": b.brand_score ?? "",
+    "Tahmini Aylık Ciro": b.est_monthly_revenue ?? "",
+    "Ort. Satıcı Sayısı": b.avg_sellers ?? "",
+    "Amazon Stok Oranı": b.amazon_in_stock_rate ?? "",
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(rows);

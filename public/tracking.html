@@ -31,17 +31,17 @@
 
         <div class="card">
           <h2>✉️ Takip Mail Şablonları (3 aşamalı otomatik takip)</h2>
-          <p class="muted">Yanıt gelmezse gönderim tarihinden itibaren gün 3'te 1. aşama, gün 7'de 2. aşama, gün 14'te 3. aşama otomatik gönderilir.</p>
+          <p class="muted">Yanıt gelmezse gönderim tarihinden itibaren gün 7'de 1. aşama, gün 14'te 2. aşama, gün 30'da (1 ay) 3. aşama otomatik gönderilir.</p>
 
-          <h3>1. Aşama (3. gün)</h3>
+          <h3>1. Aşama (7. gün)</h3>
           <input type="text" id="followupSubject1" placeholder="Konu" />
           <textarea id="followupBody1" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
 
-          <h3>2. Aşama (7. gün)</h3>
+          <h3>2. Aşama (14. gün)</h3>
           <input type="text" id="followupSubject2" placeholder="Konu" />
           <textarea id="followupBody2" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
 
-          <h3>3. Aşama (14. gün, son)</h3>
+          <h3>3. Aşama (30. gün / 1 ay, son)</h3>
           <input type="text" id="followupSubject3" placeholder="Konu" />
           <textarea id="followupBody3" rows="4" placeholder="İçerik. {{marka}} otomatik değişir."></textarea>
 
@@ -61,6 +61,7 @@
             gelen markalara sıradaki takip aşamasını otomatik gönderir. Bu özellik için Gmail
             hesabında IMAP açık olmalı (Gmail Ayarlar &gt; Yönlendirme ve POP/IMAP &gt; IMAP'i Etkinleştir).
           </p>
+          <div style="overflow-x:auto;">
           <table id="trackingTable">
             <thead>
               <tr>
@@ -70,10 +71,12 @@
                 <th>Takip Aşaması</th>
                 <th>Anlaşma Durumu</th>
                 <th>Not</th>
+                <th>Geçmiş</th>
               </tr>
             </thead>
             <tbody id="trackingBody"></tbody>
           </table>
+          </div>
         </div>
 
       </div>

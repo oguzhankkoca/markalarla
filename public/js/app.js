@@ -1,11 +1,13 @@
 let batch = null;
 let brands = [];
 let previewBrandId = null;
+const selectedIds = new Set();
 
 const emailStatusEl = document.getElementById("emailStatus");
 const brandsBody = document.getElementById("brandsBody");
 const subjectInput = document.getElementById("subjectInput");
 const bodyInput = document.getElementById("bodyInput");
+const selectAllCheckbox = document.getElementById("selectAllCheckbox");
 
 const previewOverlay = document.getElementById("previewOverlay");
 const previewTitle = document.getElementById("previewTitle");
@@ -26,6 +28,41 @@ function badge(status) {
   return `<span class="badge ${status}">${map[status] || status}</span>`;
 }
 
+function formatMoney(n) {
+  if (n === null || n === undefined || n === "") return null;
+  return "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
+// SmartScout tarzı Excel'lerden gelen marka istihbarat verisini kısaca özetler.
+function marketSummary(b) {
+  const parts = [];
+  if (b.brand_score !== null && b.brand_score !== undefined) parts.push(`Skor: ${b.brand_score}`);
+  const revenue = formatMoney(b.est_monthly_revenue);
+  if (revenue) parts.push(revenue + "/ay");
+  if (b.avg_sellers !== null && b.avg_sellers !== undefined) parts.push(`${b.avg_sellers} satıcı`);
+  return parts.length > 0 ? parts.join(" · ") : "-";
+}
+
+function hasMarketData(b) {
+  return (
+    b.brand_score !== null ||
+    b.main_category ||
+    b.est_monthly_revenue !== null ||
+    b.est_monthly_sales !== null ||
+    b.avg_price !== null ||
+    b.avg_fba_sellers !== null ||
+    b.avg_sellers !== null ||
+    b.dominant_seller ||
+    b.sales_percentage !== null ||
+    b.amazon_in_stock_rate !== null ||
+    b.avg_rating !== null ||
+    b.total_reviews !== null ||
+    b.growth_12m !== null ||
+    b.product_count !== null ||
+    b.storefront_url
+  );
+}
+
 function renderBrands() {
   brandsBody.innerHTML = "";
   for (const b of brands) {
@@ -34,22 +71,28 @@ function renderBrands() {
       !b.email && b.contact_page_url
         ? `<div class="muted" style="margin-top:4px;">📩 <a href="${b.contact_page_url}" target="_blank" rel="noopener">İletişim formu bulundu ↗</a></div>`
         : "";
+    const checked = selectedIds.has(String(b.id)) ? "checked" : "";
+    const sentViaTag = b.status === "sent" && b.sent_via === "contact_form" ? " (form ile)" : "";
     tr.innerHTML = `
+      <td><input type="checkbox" class="row-checkbox" data-id="${b.id}" ${checked} /></td>
       <td>${b.name}</td>
+      <td class="muted">${marketSummary(b)}</td>
       <td><input data-field="website" data-id="${b.id}" value="${b.website || ""}" /></td>
       <td>
         <input data-field="email" data-id="${b.id}" value="${b.email || ""}" />
         ${contactLine}
       </td>
-      <td>${badge(b.status)}</td>
+      <td>${badge(b.status)}${sentViaTag}</td>
       <td>
         <button class="small find-btn" data-id="${b.id}">Ara</button>
         <button class="small send-btn" data-id="${b.id}" ${!b.email || b.status === "duplicate_blocked" ? "disabled" : ""}>Gönder</button>
         ${
           !b.email && b.contact_page_url
-            ? `<button class="small secondary contact-btn" data-id="${b.id}">Form Aç</button>`
+            ? `<button class="small secondary contact-btn" data-id="${b.id}">Form Aç</button>
+               <button class="small secondary mark-sent-btn" data-id="${b.id}" ${b.status === "sent" ? "disabled" : ""}>Gönderildi İşaretle</button>`
             : ""
         }
+        ${hasMarketData(b) ? `<button class="small secondary market-btn" data-id="${b.id}">Piyasa Verisi</button>` : ""}
         <button class="small secondary detail-btn" data-id="${b.id}">Detay</button>
       </td>
     `;
@@ -59,6 +102,13 @@ function renderBrands() {
 }
 
 function attachRowEvents() {
+  document.querySelectorAll(".row-checkbox").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedIds.add(cb.dataset.id);
+      else selectedIds.delete(cb.dataset.id);
+    });
+  });
+
   document.querySelectorAll("input[data-field]").forEach((input) => {
     input.addEventListener("change", async () => {
       const id = input.dataset.id;
@@ -118,6 +168,51 @@ function attachRowEvents() {
       const brand = brands.find((b) => String(b.id) === btn.dataset.id);
       const steps = (brand.last_error || "Henüz aranmadı.").split(" | ").join("\n");
       alert(`${brand.name} için yapılan adımlar:\n\n${steps}`);
+    });
+  });
+
+  // Excel'den gelen marka istihbarat verisini (Brand Score, ciro, satıcı sayısı vb.)
+  // tek satırda göstermek yerine detaylı halini burada gösteriyoruz.
+  document.querySelectorAll(".market-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const b = brands.find((x) => String(x.id) === btn.dataset.id);
+      if (!b) return;
+      const lines = [
+        b.brand_score !== null && b.brand_score !== undefined ? `Marka Skoru: ${b.brand_score}` : null,
+        b.main_category ? `Ana Kategori: ${b.main_category}` : null,
+        b.subcategory ? `Alt Kategori: ${b.subcategory}` : null,
+        formatMoney(b.est_monthly_revenue) ? `Tahmini Aylık Ciro: ${formatMoney(b.est_monthly_revenue)}` : null,
+        b.est_monthly_sales !== null && b.est_monthly_sales !== undefined ? `Tahmini Aylık Satış: ${b.est_monthly_sales}` : null,
+        formatMoney(b.avg_price) ? `Ortalama Fiyat: ${formatMoney(b.avg_price)}` : null,
+        b.avg_fba_sellers !== null && b.avg_fba_sellers !== undefined ? `Ort. FBA Satıcı Sayısı: ${b.avg_fba_sellers}` : null,
+        b.avg_sellers !== null && b.avg_sellers !== undefined ? `Ort. Toplam Satıcı Sayısı: ${b.avg_sellers}` : null,
+        b.dominant_seller ? `Baskın Satıcı: ${b.dominant_seller}` : null,
+        b.sales_percentage !== null && b.sales_percentage !== undefined ? `Amazon'un Kendi Satış Payı: %${b.sales_percentage}` : null,
+        b.amazon_in_stock_rate !== null && b.amazon_in_stock_rate !== undefined ? `Amazon Stok Oranı: %${b.amazon_in_stock_rate}` : null,
+        b.avg_rating !== null && b.avg_rating !== undefined ? `Ortalama Puan: ${b.avg_rating}` : null,
+        b.total_reviews !== null && b.total_reviews !== undefined ? `Toplam Yorum: ${b.total_reviews}` : null,
+        b.growth_12m !== null && b.growth_12m !== undefined ? `12 Aylık Büyüme: %${b.growth_12m}` : null,
+        b.product_count !== null && b.product_count !== undefined ? `Ürün Sayısı: ${b.product_count}` : null,
+        b.storefront_url ? `Storefront: ${b.storefront_url}` : null,
+      ].filter(Boolean);
+      alert(`${b.name} - Piyasa Verisi:\n\n${lines.join("\n") || "Veri yok."}`);
+    });
+  });
+
+  // Marka e-maili bulunamayıp iletişim formu üzerinden elle gönderim yaptıysan,
+  // bunu sisteme "gönderildi" olarak işaretlemek için (kara liste/tekrar koruması
+  // ve takip sayfasına dahil olması için gerekli).
+  document.querySelectorAll(".mark-sent-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const brand = brands.find((b) => String(b.id) === btn.dataset.id);
+      if (!brand) return;
+      if (!confirm(`${brand.name} markasına iletişim formu üzerinden mail gönderdiğini onaylıyor musun? Bu marka "Gönderildi" olarak işaretlenecek.`)) return;
+      const res = await fetch(`/api/brands/${brand.id}/mark-contact-sent`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "İşaretlenemedi.");
+      const idx = brands.findIndex((b) => String(b.id) === String(brand.id));
+      brands[idx] = data.brand;
+      renderBrands();
     });
   });
 }
@@ -184,12 +279,15 @@ async function loadSettings() {
     emailStatusEl.innerHTML = `<span class="warn">E-mail hesabı ayarlanmamış (.env dosyasına bak)</span>`;
   }
 
-  const savedSubject = localStorage.getItem("template_subject");
-  const savedBody = localStorage.getItem("template_body");
-  subjectInput.value = savedSubject || `{{marka}} ile iş birliği teklifi`;
+  // Mail şablonu artık sunucuda (settings tablosunda) tutuluyor — böylece otomatik
+  // günlük gönderim (server tarafındaki cron) da aynı şablona erişebiliyor. Eskiden
+  // sadece tarayıcıda (localStorage) tutuluyordu, cron bunu göremiyordu.
+  subjectInput.value = s.main_subject || `{{marka}} ile iş birliği teklifi`;
   bodyInput.value =
-    savedBody ||
+    s.main_body ||
     `Sayın {{marka}} Yetkilisi,\n\n${s.company || "Şirketimiz"} olarak Amazon üzerinde ${s.offer_text || "iş birliği"} konusunda sizinle görüşmek isteriz.\n\n${s.signature || ""}`;
+
+  document.getElementById("dailyLimitInput").value = s.daily_send_limit || 0;
 }
 
 async function loadBrands() {
@@ -230,30 +328,75 @@ document.getElementById("uploadBtn").addEventListener("click", async () => {
   let msg = `${data.count} marka yüklendi.`;
   if (data.duplicateBlockedCount) msg += ` ${data.duplicateBlockedCount} tanesi daha önce gönderilmiş/olumsuzdu, otomatik işlemlerden hariç tutuldu.`;
   if (data.reusedEmailCount) msg += ` ${data.reusedEmailCount} tanesi için önceden bulunan e-mail kullanıldı.`;
+  if (data.enrichmentFieldsFound && data.enrichmentFieldsFound.length > 0) {
+    msg += ` Ek marka verisi algılandı (${data.enrichmentFieldsFound.length} sütun) — satırlardaki "Piyasa Verisi" butonundan görebilirsin.`;
+  }
   document.getElementById("uploadStatus").textContent = msg;
   brands = data.brands;
   batch = data.batch;
   renderBrands();
 });
 
+// Toplu email arama artık durdurulup kaldığı yerden devam ettirilebiliyor. Sunucu
+// tarafında bir kuyruk tutuluyor; burada sadece o kuyruğun durumunu 3 saniyede bir
+// kontrol edip ekrandaki butonları/metni güncelliyoruz.
+let findAllPollInterval = null;
+
+function updateFindAllButtons(status) {
+  document.getElementById("findAllBtn").disabled = status.running;
+  document.getElementById("stopFindAllBtn").disabled = !status.running;
+  document.getElementById("resumeFindAllBtn").disabled = status.running || status.remaining === 0;
+}
+
+async function pollFindAllStatus() {
+  await loadBrands();
+  const res = await fetch("/api/brands/find-all/status");
+  const status = await res.json();
+  updateFindAllButtons(status);
+  if (!status.running) {
+    clearInterval(findAllPollInterval);
+    findAllPollInterval = null;
+    document.getElementById("findStatus").textContent =
+      status.remaining > 0
+        ? `Duraklatıldı. ${status.remaining} marka kaldı — "Devam Et" ile devam edebilirsin.`
+        : "Tamamlandı.";
+  } else {
+    document.getElementById("findStatus").textContent = `Aranıyor... (${status.remaining} marka kaldı)`;
+  }
+}
+
+function startFindAllPolling() {
+  if (findAllPollInterval) clearInterval(findAllPollInterval);
+  findAllPollInterval = setInterval(pollFindAllStatus, 3000);
+}
+
 document.getElementById("findAllBtn").addEventListener("click", async () => {
   if (!batch) return alert("Önce bir liste yükle.");
-  document.getElementById("findStatus").textContent = "Arama başladı, arka planda çalışıyor...";
-  await fetch("/api/brands/find-all", {
+  const res = await fetch("/api/brands/find-all", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ batch }),
   });
-  let tries = 0;
-  const interval = setInterval(async () => {
-    await loadBrands();
-    tries++;
-    const stillPending = brands.some((b) => b.status === "pending");
-    if (!stillPending || tries > 60) {
-      clearInterval(interval);
-      document.getElementById("findStatus").textContent = "Tamamlandı.";
-    }
-  }, 3000);
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || "Başlatılamadı.");
+  document.getElementById("findStatus").textContent = "Arama başladı, arka planda çalışıyor...";
+  updateFindAllButtons({ running: true, remaining: data.queued });
+  startFindAllPolling();
+});
+
+document.getElementById("stopFindAllBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/brands/find-all/stop", { method: "POST" });
+  const data = await res.json();
+  document.getElementById("findStatus").textContent = `Durduruluyor... (${data.remaining} marka kaldı)`;
+});
+
+document.getElementById("resumeFindAllBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/brands/find-all/resume", { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error);
+  document.getElementById("findStatus").textContent = "Devam ediliyor...";
+  updateFindAllButtons({ running: true, remaining: data.remaining });
+  startFindAllPolling();
 });
 
 // Basit spam-tetikleyici kelime kontrolü. Kesin bir spam filtresi değildir,
@@ -289,7 +432,7 @@ function checkSpamTriggers(subject, body) {
   return found;
 }
 
-document.getElementById("saveTemplateBtn").addEventListener("click", () => {
+document.getElementById("saveTemplateBtn").addEventListener("click", async () => {
   const triggers = checkSpamTriggers(subjectInput.value, bodyInput.value);
   if (triggers.length > 0) {
     const proceed = confirm(
@@ -297,15 +440,29 @@ document.getElementById("saveTemplateBtn").addEventListener("click", () => {
     );
     if (!proceed) return;
   }
-  localStorage.setItem("template_subject", subjectInput.value);
-  localStorage.setItem("template_body", bodyInput.value);
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ main_subject: subjectInput.value, main_body: bodyInput.value }),
+  });
   alert("Şablon kaydedildi.");
 });
 
-document.getElementById("sendAllBtn").addEventListener("click", async () => {
-  const targets = brands.filter(
-    (b) => b.email && !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+document.getElementById("saveDailyLimitBtn").addEventListener("click", async () => {
+  const value = Number(document.getElementById("dailyLimitInput").value) || 0;
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ daily_send_limit: value }),
+  });
+  alert(
+    value > 0
+      ? `Kaydedildi. Sistem her gün en fazla ${value} mail gönderecek (08:00-20:00 UTC arasına yayarak).`
+      : "Kaydedildi. Otomatik günlük gönderim kapalı, sadece elle/seçerek göndereceksin."
   );
+});
+
+async function sendBatch(targets) {
   if (targets.length === 0) return alert("Gönderilecek e-mail yok.");
   if (!confirm(`${targets.length} markaya mail gönderilecek. Onaylıyor musun?`)) return;
   document.getElementById("sendStatus").textContent = `0/${targets.length}`;
@@ -317,6 +474,36 @@ document.getElementById("sendAllBtn").addEventListener("click", async () => {
     await new Promise((r) => setTimeout(r, 1500));
   }
   document.getElementById("sendStatus").textContent = "Tamamlandı.";
+}
+
+document.getElementById("sendAllBtn").addEventListener("click", () => {
+  const targets = brands.filter(
+    (b) => b.email && !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+  );
+  sendBatch(targets);
+});
+
+// Sadece işaretlediğin (checkbox) markalara gönderir — 400 marka gibi büyük bir
+// listenin tamamını tek seferde göndermek yerine, istediğin kadarını seçip
+// göndermek için.
+document.getElementById("sendSelectedBtn").addEventListener("click", () => {
+  const targets = brands.filter(
+    (b) =>
+      selectedIds.has(String(b.id)) &&
+      b.email &&
+      !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+  );
+  if (targets.length === 0) return alert("Önce tablodan en az bir marka seç (checkbox).");
+  sendBatch(targets);
+});
+
+selectAllCheckbox.addEventListener("change", () => {
+  if (selectAllCheckbox.checked) {
+    brands.forEach((b) => selectedIds.add(String(b.id)));
+  } else {
+    selectedIds.clear();
+  }
+  renderBrands();
 });
 
 document.getElementById("previewSendBtn").addEventListener("click", async () => {
@@ -333,3 +520,21 @@ previewOverlay.addEventListener("click", (e) => {
 
 loadSettings();
 loadBrands();
+
+// Sayfa yenilenirse (arama devam ederken ya da duraklatılmışken), butonların ve
+// durumun doğru görünmesi için mevcut arama durumunu kontrol et.
+(async () => {
+  try {
+    const res = await fetch("/api/brands/find-all/status");
+    const status = await res.json();
+    updateFindAllButtons(status);
+    if (status.running) {
+      document.getElementById("findStatus").textContent = `Aranıyor... (${status.remaining} marka kaldı)`;
+      startFindAllPolling();
+    } else if (status.remaining > 0) {
+      document.getElementById("findStatus").textContent = `Duraklatıldı. ${status.remaining} marka kaldı — "Devam Et" ile devam edebilirsin.`;
+    }
+  } catch (e) {
+    // sessizce geç, kritik değil
+  }
+})();

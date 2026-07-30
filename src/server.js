@@ -45,5 +45,21 @@ app.listen(PORT, () => {
       }
     });
     console.log("Günlük otomatik kontrol zamanlayıcısı kuruldu (her gün UTC 08:00).");
+
+    // Günlük gönderim limiti (Ayarlar'daki "daily_send_limit") ayarlanmışsa, mailleri
+    // tek seferde patlatmak yerine güne yaymak için 08:00-20:00 UTC arası her 10
+    // dakikada bir en fazla 1 mail gönderir. Limit 0/boşsa hiçbir şey yapmaz.
+    cron.schedule("*/10 8-20 * * *", async () => {
+      try {
+        const { runAutoSend } = require("./routes/brands");
+        const result = await runAutoSend();
+        if (result.sent > 0) {
+          console.log("[auto-send] Gönderildi:", result.brand);
+        }
+      } catch (e) {
+        console.error("[auto-send] Hata:", e.message);
+      }
+    });
+    console.log("Günlük limitli otomatik gönderim zamanlayıcısı kuruldu (08:00-20:00 UTC, her 10 dakikada bir kontrol).");
   }
 });

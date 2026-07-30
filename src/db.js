@@ -83,6 +83,38 @@ ensureColumn("brands", "bounced", "INTEGER DEFAULT 0");
 ensureColumn("brands", "name_normalized", "TEXT");
 ensureColumn("brands", "contact_page_url", "TEXT");
 
+// Ana mail şablonu artık tarayıcıda (localStorage) değil, sunucuda tutuluyor —
+// otomatik günlük gönderim (cron) bu şablona erişmesi gerektiği için.
+ensureColumn("settings", "main_subject", "TEXT");
+ensureColumn("settings", "main_body", "TEXT");
+// 0 = otomatik günlük gönderim kapalı (sadece elle gönderim). >0 ise, o sayı kadar
+// mail her gün otomatik olarak (08:00-20:00 UTC arası yayılarak) gönderilir.
+ensureColumn("settings", "daily_send_limit", "INTEGER DEFAULT 0");
+
+// SmartScout tarzı marka istihbarat dosyalarından (Brand Score, Est. Monthly Revenue vb.)
+// gelen, markayı önceliklendirmek için en faydalı alanlar. Excel'de bu sütunlar varsa
+// yükleme sırasında otomatik algılanıp buraya kaydedilir.
+ensureColumn("brands", "brand_score", "REAL");
+ensureColumn("brands", "main_category", "TEXT");
+ensureColumn("brands", "subcategory", "TEXT");
+ensureColumn("brands", "est_monthly_revenue", "REAL");
+ensureColumn("brands", "est_monthly_sales", "REAL");
+ensureColumn("brands", "avg_price", "REAL");
+ensureColumn("brands", "avg_fba_sellers", "REAL");
+ensureColumn("brands", "avg_sellers", "REAL");
+ensureColumn("brands", "dominant_seller", "TEXT");
+ensureColumn("brands", "sales_percentage", "REAL");
+ensureColumn("brands", "amazon_in_stock_rate", "REAL");
+ensureColumn("brands", "avg_rating", "REAL");
+ensureColumn("brands", "total_reviews", "INTEGER");
+ensureColumn("brands", "growth_12m", "REAL");
+ensureColumn("brands", "product_count", "INTEGER");
+ensureColumn("brands", "storefront_url", "TEXT");
+
+// Bir marka gerçek mail yerine (bulunamadığı için) iletişim formu üzerinden elle
+// gönderildiyse bunu ayırt edebilmek için.
+ensureColumn("brands", "sent_via", "TEXT DEFAULT 'email'");
+
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`
   UPDATE brands SET name_normalized = LOWER(TRIM(name))

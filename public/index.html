@@ -51,6 +51,8 @@
           <h2>3️⃣ E-mail bulma</h2>
           <div class="toolbar">
             <button id="findAllBtn">Tüm markalar için email ara</button>
+            <button id="stopFindAllBtn" class="secondary" disabled>Durdur</button>
+            <button id="resumeFindAllBtn" class="secondary" disabled>Devam Et</button>
             <span class="muted" id="findStatus"></span>
           </div>
           <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt.</p>
@@ -64,15 +66,32 @@
         </div>
 
         <div class="card">
-          <h2>5️⃣ Markalar ve gönderim</h2>
+          <h2>5️⃣ Günlük otomatik gönderim limiti (opsiyonel)</h2>
+          <p class="muted">
+            400 marka gibi büyük bir listeyi tek seferde göndermek yerine, günde en fazla
+            kaç mail gönderileceğini buradan sınırlayabilirsin. 0 bırakırsan otomatik
+            gönderim kapalı olur (sadece elle/seçerek gönderirsin). Bir sayı girersen,
+            sistem her gün o kadarını 08:00-20:00 (UTC) arasına yayarak kendiliğinden
+            gönderir — art arda patlatmadığı için spam'e düşme riski azalır.
+          </p>
+          <input type="number" id="dailyLimitInput" min="0" placeholder="Örn: 60" style="max-width:160px;" />
+          <button id="saveDailyLimitBtn" class="secondary">Kaydet</button>
+        </div>
+
+        <div class="card">
+          <h2>6️⃣ Markalar ve gönderim</h2>
           <div class="toolbar">
-            <button id="sendAllBtn">Bulunan tüm e-maillere gönder</button>
+            <button id="sendSelectedBtn">Seçilenleri Gönder</button>
+            <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
             <span class="muted" id="sendStatus"></span>
           </div>
+          <div style="overflow-x:auto;">
           <table id="brandsTable">
             <thead>
               <tr>
+                <th><input type="checkbox" id="selectAllCheckbox" /></th>
                 <th>Marka</th>
+                <th>Ciro / Skor</th>
                 <th>Website</th>
                 <th>E-mail</th>
                 <th>Durum</th>
@@ -81,6 +100,7 @@
             </thead>
             <tbody id="brandsBody"></tbody>
           </table>
+          </div>
         </div>
 
       </div>

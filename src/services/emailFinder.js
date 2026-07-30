@@ -1,5 +1,6 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
+const ai = require("./ai");
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const GENERIC_LOCAL_PARTS = [
@@ -200,13 +201,15 @@ function isQuotaError(status, data) {
   return QUOTA_KEYWORDS.some((k) => text.includes(k));
 }
 
-// Bir arama sonuç linki listesinden (her provider farklı formatta link döndürür,
-// çağıran taraf zaten sade bir url dizisi hazırlar) resmi görünen domain adaylarını
-// çıkarır, sosyal medya/pazar yeri gibi olanları atlar.
-function extractCandidates(urls, sourceName, trace) {
+// Bir arama sonuç listesinden (her provider {url, title, snippet} biçiminde ya da
+// düz bir url string'i verebilir) resmi görünen domain adaylarını çıkarır, sosyal
+// medya/pazar yeri gibi olanları atlar. title/snippet, AI doğrulaması yapılırken
+// bağlam olarak kullanılır (varsa).
+function extractCandidates(results, sourceName, trace) {
   const candidates = [];
   const skipped = [];
-  for (const url of urls) {
+  for (const r of results) {
+    const url = typeof r === "string" ? r : r && r.url;
     if (!url) continue;
     try {
       const domain = new URL(url).hostname.replace(/^www\./, "");
@@ -214,7 +217,12 @@ function extractCandidates(urls, sourceName, trace) {
         skipped.push(domain);
         continue;
       }
-      candidates.push({ domain, source: sourceName });
+      candidates.push({
+        domain,
+        source: sourceName,
+        title: typeof r === "object" ? r.title : undefined,
+        snippet: typeof r === "object" ? r.snippet : undefined,
+      });
     } catch (e) {
       continue;
     }
@@ -225,22 +233,92 @@ function extractCandidates(urls, sourceName, trace) {
   return candidates;
 }
 
-function resolveFromCandidates(candidates, sourceName, brandName, trace) {
+// Arama sonuçları arasından Claude'a "bunlardan hangisi gerçekten bu markanın resmi
+// sitesi?" diye sorar. Yalnızca heuristik (kelime eşleştirme) emin olamadığında
+// çağrılır — kolay/net eşleşmelerde AI'a hiç gidilmez, böylece hem hızlı kalır hem
+// de gereksiz API maliyeti oluşmaz.
+async function pickBestDomainWithAI(brandName, candidates, trace) {
+  if (!ai.isConfigured() || candidates.length === 0) return null;
+  const list = candidates
+    .map((c, i) => {
+      const bits = [`domain: ${c.domain}`];
+      if (c.title) bits.push(`başlık: ${c.title}`);
+      if (c.snippet) bits.push(`özet: ${c.snippet}`);
+      return `${i + 1}. ${bits.join(" | ")}`;
+    })
+    .join("\n");
+  const prompt = `Bir Amazon toptan satış şirketi için marka web sitesi doğrulaması yapıyorsun.
+Aranan marka: "${brandName}"
+
+Google arama sonuçlarından bulunan aday domainler:
+${list}
+
+Bu adaylardan hangisi "${brandName}" markasının GERÇEK, RESMİ web sitesidir? Sosyal medya,
+pazar yeri (Amazon/eBay/Trendyol/Etsy vb.), haber sitesi, inceleme/dizin sitesi ya da tamamen
+alakasız bir şirketse SEÇME. Emin değilsen index'i null bırak, tahmin yürütme.
+
+Sadece şu JSON formatında cevap ver, başka hiçbir açıklama ekleme:
+{"index": <1'den başlayan aday numarası ya da null>, "confidence": "high"|"medium"|"low", "reason": "kısa Türkçe açıklama"}`;
+
+  const result = await ai.askClaude(prompt, { maxTokens: 200 });
+  if (!result) return null;
+  if (result.error) {
+    trace.push(`AI doğrulama hatası (domain seçimi): ${result.error}`);
+    return null;
+  }
+  const parsed = ai.extractJson(result.text);
+  if (!parsed || !parsed.index || parsed.index < 1 || parsed.index > candidates.length) {
+    trace.push(`AI: adaylar arasında güvenilir bir eşleşme bulamadı${parsed?.reason ? ` (${parsed.reason})` : ""}.`);
+    return null;
+  }
+  const picked = candidates[parsed.index - 1];
+  trace.push(`AI doğrulaması: "${picked.domain}" seçildi (güven: ${parsed.confidence || "?"}) — ${parsed.reason || ""}`);
+  return { domain: picked.domain, confidence: parsed.confidence };
+}
+
+async function resolveFromCandidates(candidates, sourceName, brandName, trace) {
   if (candidates.length === 0) return null;
   trace.push(`${sourceName} adayları: ${candidates.map((c) => c.domain).join(", ")}`);
-  const best = pickBestCandidate(candidates, brandName);
-  if (domainMatchesBrand(best.domain, brandName)) {
-    trace.push(`${sourceName} ile bulundu (marka adıyla örtüşüyor): ${best.domain}`);
-  } else {
-    trace.push(`${sourceName}'dan bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${best.domain}`);
+  const heuristicBest = pickBestCandidate(candidates, brandName);
+  const heuristicMatched = domainMatchesBrand(heuristicBest.domain, brandName);
+
+  // Heuristik kelime eşleştirmesi emin değilse (marka adı domain'de görünmüyorsa),
+  // AI tanımlıysa ikinci bir görüş alıp onu tercih ediyoruz.
+  if (!heuristicMatched && ai.isConfigured()) {
+    const aiPick = await pickBestDomainWithAI(brandName, candidates, trace);
+    if (aiPick && aiPick.domain) {
+      trace.push(`${sourceName}: AI'ın seçimi heuristikten daha güvenilir kabul edildi.`);
+      return aiPick.domain;
+    }
   }
-  return best.domain;
+
+  if (heuristicMatched) {
+    trace.push(`${sourceName} ile bulundu (marka adıyla örtüşüyor): ${heuristicBest.domain}`);
+  } else {
+    trace.push(`${sourceName}'dan bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${heuristicBest.domain}`);
+  }
+  return heuristicBest.domain;
 }
+
+// Bazı markalar tek bir arama ifadesiyle bulunamıyor (küçük/az bilinen markalar,
+// ortak bir kelimeyle çakışan isimler, vb.). Bunun için birden fazla arama ifadesi
+// deniyoruz — ama sadece bir öncekinden HİÇBİR sonuç çıkmadıysa bir sonrakine
+// geçiyoruz, böylece kolay bulunan markalarda tek istekle bitiyor (API kotası boşa
+// harcanmıyor), sadece zor markalarda ekstra deneme yapılıyor.
+// 3. ifade tam olarak kullanıcının önerdiği "marka adı .com diye Google'da ara"
+// fikrini uyguluyor — önceki sürümde bu sadece tek bir siteye direkt bağlanıp
+// deneniyordu (arama değildi), şimdi gerçekten Google/DuckDuckGo'da aratılıyor.
+const SEARCH_QUERY_VARIANTS = [
+  (brand) => `${brand} official website`,
+  (brand) => `${brand} official site -site:amazon.com -site:instagram.com -site:facebook.com -site:ebay.com`,
+  (brand) => `${brand}.com`,
+  (brand) => `${brand} brand homepage contact`,
+];
 
 // Serper.dev — SerpAPI ile aynı işi (Google arama sonuçlarından resmi site bulma)
 // çok daha düşük dolar/arama maliyetiyle yapan alternatif sağlayıcı. Tanımlıysa
 // SerpAPI'den önce denenir (daha ucuz olduğu için kotayı burada tüketmek mantıklı).
-async function searchViaSerper(brandName, trace) {
+async function searchViaSerper(brandName, trace, query) {
   if (!process.env.SERPER_API_KEY) {
     trace.push("SERPER_API_KEY tanımlı değil, atlandı.");
     return null;
@@ -253,7 +331,7 @@ async function searchViaSerper(brandName, trace) {
   try {
     const { data, status } = await httpClient.post(
       "https://google.serper.dev/search",
-      { q: `${brandName} official website` },
+      { q: query },
       { headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" } }
     );
     if (isQuotaError(status, data)) {
@@ -267,10 +345,14 @@ async function searchViaSerper(brandName, trace) {
     }
     const results = data.organic || [];
     if (results.length === 0) {
-      trace.push("Serper.dev 200 döndü ama organic sonuç boş.");
+      trace.push(`Serper.dev ("${query}") 200 döndü ama organic sonuç boş.`);
       return null;
     }
-    const candidates = extractCandidates(results.map((r) => r.link), "Serper.dev", trace);
+    const candidates = extractCandidates(
+      results.map((r) => ({ url: r.link, title: r.title, snippet: r.snippet })),
+      "Serper.dev",
+      trace
+    );
     return resolveFromCandidates(candidates, "Serper.dev", brandName, trace);
   } catch (e) {
     trace.push(`Serper.dev istek hatası: ${e.message}`);
@@ -278,7 +360,7 @@ async function searchViaSerper(brandName, trace) {
   }
 }
 
-async function searchViaSerpApi(brandName, trace) {
+async function searchViaSerpApi(brandName, trace, query) {
   if (!process.env.SERPAPI_KEY) {
     trace.push("SERPAPI_KEY tanımlı değil, atlandı.");
     return null;
@@ -291,7 +373,7 @@ async function searchViaSerpApi(brandName, trace) {
   try {
     const { data, status } = await httpClient.get("https://serpapi.com/search.json", {
       params: {
-        q: `${brandName} official website`,
+        q: query,
         api_key: process.env.SERPAPI_KEY,
         num: 10,
       },
@@ -311,10 +393,14 @@ async function searchViaSerpApi(brandName, trace) {
     }
     const results = data.organic_results || [];
     if (results.length === 0) {
-      trace.push("SerpAPI 200 döndü ama organic_results boş.");
+      trace.push(`SerpAPI ("${query}") 200 döndü ama organic_results boş.`);
       return null;
     }
-    const candidates = extractCandidates(results.map((r) => r.link), "SerpAPI", trace);
+    const candidates = extractCandidates(
+      results.map((r) => ({ url: r.link, title: r.title, snippet: r.snippet })),
+      "SerpAPI",
+      trace
+    );
     return resolveFromCandidates(candidates, "SerpAPI", brandName, trace);
   } catch (e) {
     trace.push(`SerpAPI istek hatası: ${e.message}`);
@@ -322,59 +408,68 @@ async function searchViaSerpApi(brandName, trace) {
   }
 }
 
-async function findOfficialDomainViaSearch(brandName, trace) {
-  // 1) Serper.dev (tanımlıysa, dolar başına en verimli seçenek)
-  const viaSerper = await searchViaSerper(brandName, trace);
-  if (viaSerper) return viaSerper;
-
-  // 2) SerpAPI (tanımlıysa)
-  const viaSerpApi = await searchViaSerpApi(brandName, trace);
-  if (viaSerpApi) return viaSerpApi;
-
-  // 3) Ücretsiz fallback: DuckDuckGo HTML arama (bulut IP'lerinden çoğu zaman engellenir)
+// Ücretsiz fallback: DuckDuckGo HTML arama (bulut IP'lerinden çoğu zaman engellenir)
+async function searchViaDuckDuckGo(brandName, trace, query) {
   try {
     const { data, status } = await httpClient.get("https://html.duckduckgo.com/html/", {
-      params: { q: `${brandName} official website` },
+      params: { q: query },
     });
     const $ = cheerio.load(data);
-    const links = $(".result__a")
-      .map((_, el) => $(el).attr("href"))
-      .get();
     const candidatesDdg = [];
     const skippedDdg = [];
-    for (const link of links) {
-      if (!link) continue;
+    $(".result__a").each((_, el) => {
+      const $el = $(el);
+      const link = $el.attr("href");
+      if (!link) return;
+      const title = $el.text().trim();
+      const snippet = $el.closest(".result").find(".result__snippet").text().trim();
       const urlMatch = link.match(/uddg=([^&]+)/);
       const target = urlMatch ? decodeURIComponent(urlMatch[1]) : link;
       try {
         const domain = new URL(target).hostname.replace(/^www\./, "");
         if (!isOfficialLookingDomain(domain)) {
           skippedDdg.push(domain);
-          continue;
+          return;
         }
-        candidatesDdg.push({ domain, source: "DuckDuckGo" });
+        candidatesDdg.push({ domain, source: "DuckDuckGo", title, snippet });
       } catch (e) {
-        continue;
+        // geçersiz url, atla
       }
-    }
+    });
     if (skippedDdg.length > 0) {
       trace.push(`DuckDuckGo sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skippedDdg.join(", ")}`);
     }
     if (candidatesDdg.length > 0) {
-      trace.push(`DuckDuckGo adayları: ${candidatesDdg.map((c) => c.domain).join(", ")}`);
-      const best = pickBestCandidate(candidatesDdg, brandName);
-      if (domainMatchesBrand(best.domain, brandName)) {
-        trace.push(`DuckDuckGo ile bulundu (marka adıyla örtüşüyor): ${best.domain}`);
-      } else {
-        trace.push(`DuckDuckGo'dan bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${best.domain}`);
-      }
-      return best.domain;
+      return resolveFromCandidates(candidatesDdg, "DuckDuckGo", brandName, trace);
     }
     if (skippedDdg.length === 0) {
-      trace.push(`DuckDuckGo yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
+      trace.push(`DuckDuckGo ("${query}") yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
     }
+    return null;
   } catch (e) {
     trace.push(`DuckDuckGo istek hatası: ${e.message}`);
+    return null;
+  }
+}
+
+async function findOfficialDomainViaSearch(brandName, trace) {
+  for (let i = 0; i < SEARCH_QUERY_VARIANTS.length; i++) {
+    const query = SEARCH_QUERY_VARIANTS[i](brandName);
+    if (i > 0) {
+      trace.push(`Önceki arama ifadesi hiç sonuç vermedi, farklı bir ifadeyle tekrar deneniyor: "${query}"`);
+    }
+
+    // 1) Serper.dev (tanımlıysa, dolar başına en verimli seçenek)
+    const viaSerper = await searchViaSerper(brandName, trace, query);
+    if (viaSerper) return viaSerper;
+
+    // 2) SerpAPI (tanımlıysa)
+    const viaSerpApi = await searchViaSerpApi(brandName, trace, query);
+    if (viaSerpApi) return viaSerpApi;
+
+    // 3) Ücretsiz fallback: DuckDuckGo
+    const viaDdg = await searchViaDuckDuckGo(brandName, trace, query);
+    if (viaDdg) return viaDdg;
   }
 
   // 4) Son çare: marka adından direkt domain tahmini
@@ -442,11 +537,48 @@ async function scrapePage(url, trace) {
     });
     const hasForm = $("form").length > 0;
     trace.push(`${url} -> ${found.length} email adayı bulundu${hasForm ? ", bir form içeriyor" : ""}.`);
-    return { found, looksLikeContactPage: hasForm, text: $("body").text().slice(0, 5000) };
+    return {
+      found,
+      looksLikeContactPage: hasForm,
+      text: $("body").text().slice(0, 5000),
+      title: $("title").text().trim(),
+    };
   } catch (e) {
     trace.push(`${url} -> istek hatası: ${e.message}`);
-    return { found: [], looksLikeContactPage: false, text: "" };
+    return { found: [], looksLikeContactPage: false, text: "", title: "" };
   }
+}
+
+// Ana sayfa metninde heuristik (marka adı geçiyor mu) belirsiz/olumsuz çıktığında,
+// AI tanımlıysa Claude'a "bu sayfa gerçekten bu markaya mı ait?" diye sorar. Sadece
+// bu belirsiz durumlarda çağrılır (her marka için değil), maliyeti düşük tutar.
+async function verifyHomepageWithAI(brandName, domain, pageTitle, pageText, trace) {
+  if (!ai.isConfigured()) return null;
+  const prompt = `"${domain}" adresindeki bir web sitesinin "${brandName}" markasının GERÇEK
+resmi/kurumsal sitesi olup olmadığını değerlendiriyorsun.
+
+Sayfa başlığı: ${pageTitle || "(yok)"}
+Sayfa içeriğinden örnek metin: ${(pageText || "").slice(0, 800) || "(yok)"}
+
+Bu site "${brandName}" markasının resmi sitesi mi? Marka adı sayfada birebir geçmese bile,
+içerik/ürünler/başlık markayla açıkça örtüşüyorsa evet diyebilirsin. Emin değilsen confidence
+"low" ver.
+
+Sadece şu JSON formatında cevap ver, başka açıklama ekleme:
+{"is_official": true|false, "confidence": "high"|"medium"|"low", "reason": "kısa Türkçe açıklama"}`;
+
+  const result = await ai.askClaude(prompt, { maxTokens: 150 });
+  if (!result) return null;
+  if (result.error) {
+    trace.push(`AI doğrulama hatası (ana sayfa): ${result.error}`);
+    return null;
+  }
+  const parsed = ai.extractJson(result.text);
+  if (!parsed) return null;
+  trace.push(
+    `AI ana sayfa doğrulaması: ${parsed.is_official ? "resmi site gibi görünüyor" : "resmi site gibi görünmüyor"} (güven: ${parsed.confidence || "?"}) — ${parsed.reason || ""}`
+  );
+  return parsed;
 }
 
 // Excel'deki "website" sütunu bazen gerçek bir link değil, bir buton/link etiketi
@@ -481,8 +613,24 @@ async function findBrandEmail(brandName, providedWebsite) {
   let domain = null;
 
   if (providedWebsite && looksLikeDomain(providedWebsite)) {
-    domain = providedWebsite.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
-    trace.push(`Excel'den verilen website kullanıldı: ${domain}`);
+    const candidateDomain = providedWebsite
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split("/")[0];
+    // Excel'deki "website" sütunu bazen markanın kendi sitesi değil, bir Amazon ürün
+    // linki (amazon.com/dp/...) ya da başka bir pazar yeri/sosyal medya linki olabilir.
+    // Bunu körü körüne güvenip amazon.com'u "markanın sitesi" sanmamak için aynı
+    // kara listeyi burada da uyguluyoruz — aksi halde tüm markalara aynı (Amazon'a ait)
+    // e-mail atanabilir.
+    if (isOfficialLookingDomain(candidateDomain)) {
+      domain = candidateDomain;
+      trace.push(`Excel'den verilen website kullanıldı: ${domain}`);
+    } else {
+      trace.push(
+        `Excel'den verilen website bir pazar yeri/sosyal medya linkiydi ("${candidateDomain}"), markanın kendi sitesi olarak kabul edilmedi, resmi site aranıyor.`
+      );
+      domain = await findOfficialDomainViaSearch(brandName, trace);
+    }
   } else {
     if (providedWebsite) {
       trace.push(`Excel'deki website değeri geçerli bir domain gibi görünmüyor ("${providedWebsite}"), aramaya geçiliyor.`);
@@ -499,15 +647,31 @@ async function findBrandEmail(brandName, providedWebsite) {
 
   // Seçilen domain gerçekten markaya mı ait, yoksa alakasız bir site mi taranıyor —
   // ana sayfayı çekip marka adının sayfada geçip geçmediğine bakarak basit bir
-  // sağlama yapıyoruz. Kesin değildir ama yanlış siteye yazılan mailleri azaltır.
+  // sağlama yapıyoruz. Bu heuristik belirsiz/olumsuz çıkarsa (örn. marka adı sayfada
+  // birebir geçmiyor ama aslında doğru site olabilir — "Method" markası "Method Home"
+  // yazıyor olabilir), AI tanımlıysa sayfa başlığı+içeriğine bakarak ikinci bir görüş
+  // alıyoruz. Bu iki katmanlı kontrol yanlış siteye yazılan mailleri büyük ölçüde azaltır.
   let homepageLooksRelated = true;
   try {
     const home = await scrapePage(website, trace);
     const normPageText = normalizeForMatch(home.text);
     const mainToken = coreBrandTokens(brandName).sort((a, b) => b.length - a.length)[0];
-    if (mainToken && mainToken.length >= 3 && !normPageText.includes(mainToken)) {
-      homepageLooksRelated = false;
-      trace.push(`Uyarı: "${brandName}" adı ${website} ana sayfasında geçmiyor, yanlış site seçilmiş olabilir — göndermeden önce kontrol et.`);
+    const heuristicRelated = !(mainToken && mainToken.length >= 3 && !normPageText.includes(mainToken));
+    homepageLooksRelated = heuristicRelated;
+
+    if (!heuristicRelated) {
+      trace.push(`Uyarı: "${brandName}" adı ${website} ana sayfasında geçmiyor, yanlış site seçilmiş olabilir.`);
+      const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace);
+      if (aiVerdict) {
+        if (aiVerdict.is_official && aiVerdict.confidence !== "low") {
+          homepageLooksRelated = true;
+          trace.push("AI heuristiği geçersiz kıldı: site gerçekten resmi görünüyor, güven yükseltildi.");
+        } else if (!aiVerdict.is_official) {
+          trace.push("AI de bu sitenin resmi olmadığını düşünüyor — göndermeden önce mutlaka elle kontrol et.");
+        }
+      } else {
+        trace.push("Göndermeden önce elle kontrol etmeni öneririz.");
+      }
     }
   } catch (e) {
     // ana sayfa sağlaması başarısız olursa sessizce devam et, kritik değil

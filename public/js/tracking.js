@@ -43,11 +43,12 @@ function renderTracking(brands) {
   trackingBody.innerHTML = "";
   for (const b of brands) {
     const tr = document.createElement("tr");
+    const viaText = b.sent_via === "contact_form" ? " (form ile)" : "";
     const sentAtText = b.sent_at
-      ? `${new Date(b.sent_at).toLocaleDateString("tr-TR")} (${b.days_since_sent} gün önce)`
+      ? `${new Date(b.sent_at).toLocaleDateString("tr-TR")} (${b.days_since_sent} gün önce)${viaText}`
       : "-";
     const stage = b.follow_up_stage || 0;
-    const stageText = stage > 0 ? `${stage}. aşama gönderildi` : "Henüz gönderilmedi";
+    const stageText = stage > 0 ? `${stage}/3 gönderildi` : "Henüz gönderilmedi";
 
     tr.innerHTML = `
       <td>${b.name}<br><span class="muted">${b.email || ""}</span></td>
@@ -59,9 +60,26 @@ function renderTracking(brands) {
       <td class="muted">${stageText}</td>
       <td>${dealStageSelect(b.id, b.deal_stage || "new")}</td>
       <td class="muted">${b.reply_snippet ? b.reply_snippet.slice(0, 120) + "..." : ""}</td>
+      <td><button class="small secondary history-btn" data-id="${b.id}" data-name="${b.name}">Geçmiş</button></td>
     `;
     trackingBody.appendChild(tr);
   }
+
+  document.querySelectorAll(".history-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const res = await fetch(`/api/tracking/${btn.dataset.id}/history`);
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Geçmiş alınamadı.");
+      if (!data.logs || data.logs.length === 0) {
+        return alert(`${btn.dataset.name} için henüz kayıtlı bir gönderim geçmişi yok.`);
+      }
+      const lines = data.logs.map((l) => {
+        const date = new Date(l.created_at).toLocaleString("tr-TR");
+        return `${date} — [${l.status}] ${l.message || ""}`;
+      });
+      alert(`${btn.dataset.name} gönderim geçmişi:\n\n${lines.join("\n")}`);
+    });
+  });
 
   document.querySelectorAll(".sentiment-select").forEach((sel) => {
     sel.addEventListener("change", async () => {

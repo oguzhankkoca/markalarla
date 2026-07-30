@@ -78,11 +78,27 @@ başlayabilirsin, bundan sonrası kalıcı olacak.
 3. **E-mail bulma**: "Tüm markalar için email ara" butonuna bas. Bu işlem internetten
    arama yapıp markanın resmi sitesini bulmaya, sonra o sitedeki iletişim sayfalarını
    tarayıp e-mail çıkarmaya çalışır. Süre marka sayısına göre birkaç dakika sürebilir.
+   - Artık tek bir arama ifadesiyle yetinmiyor: "{marka} official website" sonuç
+     vermezse sırasıyla "{marka} official site" (pazar yerlerini hariç tutarak),
+     "{marka}.com" (gerçekten Google/DuckDuckGo'da aratarak, eskisi gibi sadece
+     direkt bağlanıp denemek yerine) ve "{marka} brand homepage contact" ifadelerini
+     dener. Bir ifade hiç sonuç vermezse bir sonrakine geçer — kolay bulunan
+     markalarda tek istekle biter, sadece zor markalarda ekstra deneme yapılır.
+   - Excel'deki "website" sütununda bir Amazon ürün linki (amazon.com/dp/...) ya da
+     başka bir pazar yeri/sosyal medya linki varsa, sistem artık bunu markanın kendi
+     sitesi sanmıyor — bu tür linkleri fark edip görmezden geliyor ve resmi siteyi
+     kendisi arıyor. (Eskiden bu linkler yanlışlıkla "marka sitesi" sanılıp hepsine
+     aynı — mesela Amazon'a ait — bir e-mail atanabiliyordu, bu düzeltildi.)
    - Arama sonuçları artık marka adıyla domain adını karşılaştırıp en iyi eşleşeni seçiyor
      (ör. "Acme Coffee" için acmecoffee.com gibi bir sonuç, alakasız bir haber/dizin sitesine
      tercih edilir) ve seçilen sitenin ana sayfasında marka adının gerçekten geçip geçmediğini
      kontrol ediyor. Yine de bu %100 garanti değil — "Detay" butonundan hangi adımların
      izlendiğini görebilir, şüpheliyse e-maili göndermeden önce siteyi elle kontrol edebilirsin.
+   - Arama sırasında **"Durdur"** butonuyla işlemi durdurabilir, sonra **"Devam Et"**
+     ile kaldığı markadan itibaren devam ettirebilirsin (baştan başlamaz, sadece henüz
+     aranmamış markaları işler). Not: sunucu yeniden başlarsa (örn. Render yeni bir
+     deploy yaparsa) bu duraklatma bilgisi kaybolur — böyle bir durumda "Tüm markalar
+     için email ara"ya tekrar basman yeterli, zaten bulunmuş markalar tekrar aranmaz.
    - E-mail bulunamayan ama markanın sitesinde bir "bize ulaşın" / iletişim formu tespit
      edilen markalarda, e-mail sütununun altında **"İletişim formu bulundu"** linki ve
      satırda bir **"Form Aç"** butonu belirir. Bu butona basınca hazırladığın mail metni
@@ -93,8 +109,13 @@ başlayabilirsin, bundan sonrası kalıcı olacak.
 4. **Mail şablonu**: konu ve içerik yaz, `{{marka}}` yazdığın her yer gönderim sırasında
    otomatik marka adıyla değişir.
 5. **Gönderim**: tabloda her marka satırında e-maili kontrol et/düzelt (otomatik bulma
-   %100 garanti değildir), sonra tek tek "Gönder" ya da toplu "Bulunan tüm e-maillere
-   gönder" butonunu kullan.
+   %100 garanti değildir), sonra tek tek "Gönder", checkbox'larla seçtiklerine
+   "Seçilenleri Gönder", ya da toplu "Bulunan tüm e-maillere gönder" butonunu kullan.
+   - **Büyük listelerde (100+ marka) tek seferde hepsine göndermek riskli** — Gmail'i
+     spam gönderen bir hesap gibi gösterebilir. Bunun yerine "5️⃣ Günlük otomatik
+     gönderim limiti" bölümünden günde en fazla kaç mail gönderileceğini gir (örn. 60).
+     Sistem bu kadarını her gün 08:00-20:00 (UTC) arasına yayarak kendiliğinden
+     gönderir, elle bir şey yapmana gerek kalmaz. 0 bırakırsan bu özellik kapalı olur.
 
 ## Gönderim Takibi (yanıt kontrolü + otomatik follow-up)
 
@@ -108,8 +129,11 @@ Panelin sağ üstünden "Gönderim Takibi" sayfasına gidebilirsin. Bu sayfa:
 - Olumlu bir yanıt tespit edildiğinde, kendi mail adresine otomatik bir **bildirim maili**
   gönderir (bir markadan sadece bir kez bildirim gelir, tekrar tekrar gelmez)
 - **3 aşamalı otomatik takip**: yanıt gelmeyen markalara gönderim tarihinden itibaren
-  3. günde 1. aşama, 7. günde 2. aşama, 14. günde 3. (son) aşama maili otomatik gider.
-  Her aşamanın metnini ayrı ayrı düzenleyebilirsin.
+  7. günde 1. aşama, 14. günde 2. aşama, 30. günde (1 ay) 3. (son) aşama maili otomatik
+  gider. Her aşamanın metnini ayrı ayrı düzenleyebilirsin.
+- **Geçmiş**: her marka satırındaki "Geçmiş" butonuyla o markaya ait tüm gönderim/takip
+  kayıtlarını (ilk mail, hangi follow-up aşaması ne zaman gönderildi, hatalar) tarih
+  sırasıyla görebilirsin — "kaçıncı takibi ne zaman attık" sorusunun cevabı burada.
 - **Anlaşma aşaması (pipeline)**: her marka için Yeni / Görüşme Planlandı / Numune
   Gönderildi / Anlaşma Yapıldı / Reddedildi durumlarından birini elle seçip iş sürecini
   takip edebilirsin.
@@ -130,6 +154,25 @@ sekmesine git, **"IMAP'i Etkinleştir"** seçeneğini işaretle, kaydet.
 **Not:** Günlük otomatik kontrol, sunucunun sürekli açık kalmasını gerektirir (ücretsiz Render
 planında uyuduğu için güvenilir çalışmaz — bu yüzden Starter plana geçmiştin). Ücretsiz planda
 kalırsan, "Yanıtları Kontrol Et" butonuna manuel basman gerekir.
+
+## İletişim formu ile gönderimi işaretleme
+
+E-mail bulunamayıp "Form Aç" ile iletişim formu üzerinden elle mail gönderdiysen,
+gönderdikten sonra aynı satırdaki **"Gönderildi İşaretle"** butonuna bas. Bu marka
+sisteme "Gönderildi" olarak kaydedilir (durumunda "(form ile)" notu görünür), tekrar
+gönderim/kara liste korumasına dahil olur ve Gönderim Takibi sayfasında görünür.
+(E-mail adresi olmadığı için otomatik follow-up gönderilmez — takibi elle yapman gerekir.)
+
+## Marka istihbarat verisi (SmartScout vb. Excel'ler)
+
+Excel dosyanda "Brand Score", "Est. Monthly Revenue", "Avg. Sellers", "Amazon In-Stock
+Rate" gibi SmartScout tarzı sütunlar varsa, sistem yükleme sırasında bunları otomatik
+algılayıp kaydeder — ayrıca bir şey yapmana gerek yok. Panelde her marka satırının
+yanında kısa bir özet ("Skor: 82 · $45.000/ay · 6 satıcı" gibi) görünür; "Piyasa Verisi"
+butonuna basarak tüm alanları (kategori, ortalama fiyat, satıcı sayıları, Amazon'un kendi
+satış payı, stok oranı, puan/yorum sayısı, büyüme oranı, storefront linki vb.) görebilirsin.
+Bu veriler markaları önceliklendirmen için bir yardımcı sinyaldir, otomatik bir
+filtreleme/sıralama yapmaz — hangi markalara öncelik vereceğine sen karar verirsin.
 
 ## Tekrar yükleme / kara liste koruması
 
@@ -194,6 +237,31 @@ puanını kontrol edebilirsin.
 - Şablonlarda çok fazla link, büyük harfle yazılmış kelimeler, aşırı ünlem işareti kullanma.
 - Alıcı "spam" derse ya da olumsuz yanıt verirse (sistem zaten bunu **kara liste** özelliğiyle
   hariç tutuyor) bir daha o markaya yazma — şikayet oranı düşük tutmak en önemli faktör.
+
+## AI destekli doğrulama (opsiyonel, hata payını azaltır)
+
+`.env`'e `ANTHROPIC_API_KEY` eklersen (https://console.anthropic.com üzerinden alınır —
+**Claude uygulaması/claude.ai aboneliğinden farklıdır**, ayrı ve kullandıkça ödemeli bir
+API anahtarıdır), sistem iki noktada Claude'a "ikinci görüş" sorar:
+
+1. **Doğru siteyi seçerken**: arama sonuçları arasında kelime eşleştirmesi (heuristik)
+   emin olamadığında — örneğin marka adı domain'de birebir geçmiyorsa — Claude'a arama
+   sonuçlarının başlık/özetini gösterip "bunlardan hangisi gerçekten bu markanın resmi
+   sitesi?" diye sorar.
+2. **Seçilen siteyi doğrularken**: ana sayfada marka adı birebir geçmiyorsa (ör. "Method"
+   markasının sitesi "Method Home" yazıyor olabilir), Claude sayfa başlığı ve içeriğine
+   bakıp bu sitenin gerçekten o markaya ait olup olmadığını değerlendirir.
+
+Önemli: **AI sadece heuristiğin emin olamadığı belirsiz durumlarda çağrılır** — kolay/net
+eşleşmelerde (ör. "Nike" için nike.com) AI'a hiç gidilmez. Bu hem hızı korur hem de API
+maliyetini düşük tutar (Haiku modeli kullanılır, ucuz ve hızlıdır).
+
+**Dürüst olmak gerekirse:** hata payını tam olarak sıfıra indirmek mümkün değil — internet
+üzerindeki veriler her zaman %100 net olmayabilir, bazı markaların birden fazla web sitesi
+olabilir ya da hiç resmi sitesi yayında olmayabilir. Bu AI katmanı, heuristiğin tek başına
+yanlış karar verdiği durumların önemli bir kısmını yakalayıp düzeltir ve şüpheli durumlarda
+"göndermeden önce elle kontrol et" uyarısı ekler (bkz. "Detay" butonu) — ama %100 garanti
+sağlayan bir sistem yoktur, göndermeden önce kontrol etme alışkanlığını bırakma.
 
 ## Önemli sınırlamalar
 

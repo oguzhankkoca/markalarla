@@ -94,14 +94,21 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
     const enrichmentFieldsFound = Object.keys(enrichmentMap);
 
     const batch = crypto.randomUUID();
+    // Dosyanın orijinal adı, "🆕 Yeni Yüklenen" sekmesinde kullanıcının hangi
+    // Excel üzerinde çalıştığını anlayabilmesi için (rastgele UUID'nin aksine
+    // insan-okunur). Uzantıyı at, çok uzunsa kırp.
+    const batchName = String(req.file.originalname || "Excel")
+      .replace(/\.(xlsx|xls|csv)$/i, "")
+      .slice(0, 80);
+    const batchUploadedAt = new Date().toISOString();
     const insert = db.prepare(
       `INSERT INTO brands (
-         batch, name, name_normalized, website, email, email_source, confidence, status, last_error,
+         batch, batch_name, batch_uploaded_at, name, name_normalized, website, email, email_source, confidence, status, last_error,
          brand_score, main_category, subcategory, est_monthly_revenue, est_monthly_sales, avg_price,
          avg_fba_sellers, avg_sellers, dominant_seller, sales_percentage, amazon_in_stock_rate,
          avg_rating, total_reviews, growth_12m, product_count, storefront_url, country
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // Marka adı (normalize edilmiş) sistemde herhangi bir yüklemede/batch'te zaten
@@ -150,7 +157,7 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
         existingNames.add(nameNorm);
 
         insert.run(
-          batch, name, nameNorm, website, null, null, "unknown", "pending", null,
+          batch, batchName, batchUploadedAt, name, nameNorm, website, null, null, "unknown", "pending", null,
           enrichment.brand_score, enrichment.main_category, enrichment.subcategory,
           enrichment.est_monthly_revenue, enrichment.est_monthly_sales, enrichment.avg_price,
           enrichment.avg_fba_sellers, enrichment.avg_sellers, enrichment.dominant_seller,
@@ -166,6 +173,8 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
     res.json({
       ok: true,
       batch,
+      batchName,
+      batchUploadedAt,
       count: brands.length,
       brands,
       skippedExistingCount,
@@ -184,10 +193,15 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
 // hep tekilleştirilmiş, tutarlı bir liste gösteriyor.
 router.get("/api/brands", (req, res) => {
   const lastBatchRow = db
-    .prepare("SELECT batch FROM brands ORDER BY id DESC LIMIT 1")
+    .prepare("SELECT batch, batch_name, batch_uploaded_at FROM brands ORDER BY id DESC LIMIT 1")
     .get();
   const brands = db.prepare("SELECT * FROM brands ORDER BY id").all();
-  res.json({ brands, batch: lastBatchRow ? lastBatchRow.batch : null });
+  res.json({
+    brands,
+    batch: lastBatchRow ? lastBatchRow.batch : null,
+    batchName: lastBatchRow ? lastBatchRow.batch_name : null,
+    batchUploadedAt: lastBatchRow ? lastBatchRow.batch_uploaded_at : null,
+  });
 });
 
 // v21'den önce yüklenen dosyalarda (ya da tekrar önleme devreye girmeden önce

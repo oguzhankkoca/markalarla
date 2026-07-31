@@ -12,10 +12,30 @@
   <div class="app-layout">
     <aside class="sidebar">
       <div class="sidebar-logo">🚀 <span class="logo-text">Neofa Outreach</span></div>
+      <div class="nav-section-label">Operasyon</div>
       <nav>
-        <a href="/index.html" class="nav-link">📋 <span class="nav-label">Panel</span></a>
-        <a href="/tracking.html" class="nav-link">📬 <span class="nav-label">Gönderim Takibi</span></a>
-        <a href="/analytics.html" class="nav-link active">📊 <span class="nav-label">Özet</span></a>
+        <a href="/analytics.html" class="nav-link active">
+          <span class="nav-icon">📊</span>
+          <span class="nav-text">
+            <span class="nav-title">Dashboard</span>
+            <span class="nav-subtitle">Günün özeti & odağı</span>
+          </span>
+        </a>
+        <a href="/index.html" class="nav-link">
+          <span class="nav-icon">🔍</span>
+          <span class="nav-text">
+            <span class="nav-title">Marka Keşif</span>
+            <span class="nav-subtitle">Liste yükle & e-posta bul</span>
+          </span>
+        </a>
+        <a href="/tracking.html" class="nav-link">
+          <span class="nav-icon">📬</span>
+          <span class="nav-text">
+            <span class="nav-title">Mail Merkezi</span>
+            <span class="nav-subtitle">Gelen & olumlu dönüşler</span>
+          </span>
+          <span class="nav-badge" id="navMailBadge" style="display:none;">0</span>
+        </a>
       </nav>
     </aside>
 
@@ -49,5 +69,6 @@
   </div>
 
   <script src="/js/analytics.js"></script>
+  <script src="/js/navBadge.js"></script>
 </body>
 </html>

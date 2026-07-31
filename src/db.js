@@ -198,6 +198,12 @@ ensureColumn("settings", "warmup_start_limit", "INTEGER DEFAULT 10");
 ensureColumn("settings", "warmup_increment", "INTEGER DEFAULT 10");
 ensureColumn("settings", "warmup_started_at", "TEXT");
 
+// "batch" (her yüklemeye verilen rastgele UUID) tek başına insan için anlamsız —
+// panelde "🆕 Yeni Yüklenen" sekmesinde hangi Excel'in üzerinde çalıştığını
+// anlayabilmek için, o UUID'ye eşlik eden okunabilir dosya adı ve yükleme zamanı.
+ensureColumn("brands", "batch_name", "TEXT");
+ensureColumn("brands", "batch_uploaded_at", "TEXT");
+
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`
   UPDATE brands SET name_normalized = LOWER(TRIM(name))

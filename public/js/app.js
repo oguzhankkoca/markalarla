@@ -6,6 +6,15 @@ let currentFilter = "all";
 // Kategori Ağacı: durum sekmelerinden (currentFilter) BAĞIMSIZ, ek bir AND filtresi.
 // null ise hiçbir kategori seçilmemiş demektir (tüm kategoriler görünür).
 let categoryFilter = null;
+// Sayfalandırma: pageSize sayı (20/50/100) ya da "all" (tümü) olabilir. Büyük
+// listelerde (500+ marka) tüm tabloyu tek seferde DOM'a basmak yavaşlatabildiği
+// için varsayılan 20.
+let pageSize = 20;
+let currentPage = 1;
+// En son yüklenen Excel dosyasının adı/zamanı — "🆕 Yeni Yüklenen" sekmesinin
+// etiketinde ("X dosyası, Y marka") göstermek için.
+let latestBatchName = null;
+let latestBatchUploadedAt = null;
 
 const emailStatusEl = document.getElementById("emailStatus");
 const brandsBody = document.getElementById("brandsBody");
@@ -102,8 +111,16 @@ function hasContactFormOnly(b) {
 
 function matchesFilter(b, filter) {
   if (filter === "all") return true;
+  // En son yüklenen Excel'deki markalar — bir sonraki Excel yüklendiğinde `batch`
+  // değişir, bu markalar otomatik olarak bu sekmeden çıkıp genel listenin/diğer
+  // sekmelerin arasına "karışmış" olur (ayrı bir taşıma işlemi gerekmez, zaten
+  // hepsi aynı tabloda).
+  if (filter === "new_upload") return Boolean(batch) && b.batch === batch;
   if (filter === "found") return b.status === "found";
-  if (filter === "not_found") return b.status === "not_found" || b.status === "error";
+  // İletişim formu bulunan markalar (e-mail yok ama form var) burada değil, sadece
+  // "İletişim Formu Olanlar" sekmesinde görünür — aynı marka iki sekmede birden
+  // tekrar etmesin diye.
+  if (filter === "not_found") return (b.status === "not_found" || b.status === "error") && !hasContactFormOnly(b);
   if (filter === "pending") return b.status === "pending";
   if (filter === "contact_form") return hasContactFormOnly(b);
   // Sistem bu domain'in/e-mail'in markaya gerçekten ait olduğundan tam emin
@@ -207,25 +224,48 @@ document.getElementById("categoryTree").addEventListener("click", (e) => {
   if (!row) return;
   const cat = row.dataset.category;
   categoryFilter = !cat || categoryFilter === cat ? null : cat;
+  currentPage = 1;
+  renderBrands();
+});
+
+// Sayfalandırma kontrolleri: sayfa başına 20/50/100/Tümü ve önceki/sonraki.
+document.getElementById("pageSizeGroup").addEventListener("click", (e) => {
+  const btn = e.target.closest(".page-size-btn");
+  if (!btn) return;
+  const size = btn.dataset.size;
+  pageSize = size === "all" ? "all" : Number(size);
+  currentPage = 1;
+  renderBrands();
+});
+
+document.getElementById("prevPageBtn").addEventListener("click", () => {
+  currentPage = Math.max(1, currentPage - 1);
+  renderBrands();
+});
+
+document.getElementById("nextPageBtn").addEventListener("click", () => {
+  currentPage = currentPage + 1;
   renderBrands();
 });
 
 function renderFilterTabs() {
-  const counts = { all: brands.length, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0, duplicate_blocked: 0, suppressed: 0 };
+  const counts = { all: brands.length, new_upload: 0, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0, duplicate_blocked: 0, suppressed: 0 };
   for (const b of brands) {
     if (b.status === "found") counts.found++;
-    else if (b.status === "not_found" || b.status === "error") counts.not_found++;
+    else if ((b.status === "not_found" || b.status === "error") && !hasContactFormOnly(b)) counts.not_found++;
     else if (b.status === "pending") counts.pending++;
     else if (b.status === "duplicate_blocked") counts.duplicate_blocked++;
     if (hasContactFormOnly(b)) counts.contact_form++;
     if (b.email && b.confidence === "low") counts.low_confidence++;
     if (b.suppressed) counts.suppressed++;
+    if (batch && b.batch === batch) counts.new_upload++;
   }
   const setText = (id, n) => {
     const el = document.getElementById(id);
     if (el) el.textContent = n;
   };
   setText("countAll", counts.all);
+  setText("countNewUpload", counts.new_upload);
   setText("countFound", counts.found);
   setText("countNotFound", counts.not_found);
   setText("countPending", counts.pending);
@@ -236,12 +276,60 @@ function renderFilterTabs() {
   document.querySelectorAll(".filter-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.filter === currentFilter);
   });
+
+  // "Yeni Yüklenen" sekmesi, hiç Excel yüklenmemişse (batch yok) ya da eski bir
+  // veritabanından geliyorsa (batch_name/uploaded_at hiç dolmamışsa) gösterilmez —
+  // eski kayıtlarda bu sütunlar boş olabilir, o zaman sekme anlamsız kalır.
+  const newUploadTab = document.getElementById("newUploadTab");
+  const newUploadLabel = document.getElementById("newUploadLabel");
+  if (newUploadTab) newUploadTab.style.display = counts.new_upload > 0 ? "" : "none";
+  if (newUploadLabel) {
+    if (counts.new_upload > 0 && latestBatchName) {
+      const dateLabel = latestBatchUploadedAt
+        ? new Date(latestBatchUploadedAt).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })
+        : "";
+      newUploadLabel.textContent = `🆕 En son yüklenen: "${latestBatchName}" — ${counts.new_upload} marka${dateLabel ? " · " + dateLabel : ""}. Bir sonraki Excel'i yüklediğinde bu liste genel markaların arasına karışır, yeni sekmede o dosya görünür.`;
+      newUploadLabel.style.display = "";
+    } else {
+      newUploadLabel.style.display = "none";
+    }
+  }
+}
+
+// Sayfalandırma: pageSize ve currentPage'e göre, verilen (zaten filtrelenmiş)
+// listeden gösterilecek dilimi ve sayfa bilgisini hesaplar. Sayfa numarası,
+// filtre/kategori/sayfa boyutu değiştiğinde aralık dışında kalırsa otomatik
+// olarak geçerli sınıra çekilir (ör. son sayfadayken sayfa boyutunu büyütmek).
+function paginate(list) {
+  const total = list.length;
+  const effectiveSize = pageSize === "all" ? Math.max(total, 1) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / effectiveSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const start = (currentPage - 1) * effectiveSize;
+  const end = Math.min(start + effectiveSize, total);
+  return { pageItems: list.slice(start, end), start, end, total, totalPages };
+}
+
+function renderPaginationBar(info) {
+  const rangeLabel = info.total === 0 ? "0-0 / 0 marka" : `${info.start + 1}-${info.end} / ${info.total} marka`;
+  document.getElementById("pageRangeLabel").textContent = rangeLabel;
+  document.getElementById("pageIndicatorLabel").textContent = `Sayfa ${currentPage}/${info.totalPages}`;
+  document.getElementById("prevPageBtn").disabled = currentPage <= 1;
+  document.getElementById("nextPageBtn").disabled = currentPage >= info.totalPages;
+  document.querySelectorAll(".page-size-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.size === String(pageSize));
+  });
 }
 
 function renderBrands() {
   brandsBody.innerHTML = "";
   const visibleBrands = brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b));
-  for (const b of visibleBrands) {
+  const pageInfo = paginate(visibleBrands);
+  renderPaginationBar(pageInfo);
+  const { pageItems, start } = pageInfo;
+  pageItems.forEach((b, i) => {
+    const rowNumber = start + i + 1;
     const tr = document.createElement("tr");
     const contactLine =
       !b.email && b.contact_page_url
@@ -251,6 +339,7 @@ function renderBrands() {
     const sentViaTag = b.status === "sent" && b.sent_via === "contact_form" ? " (form ile)" : "";
     tr.innerHTML = `
       <td><input type="checkbox" class="row-checkbox" data-id="${b.id}" ${checked} /></td>
+      <td class="row-number">${rowNumber}</td>
       <td>${b.name}${categoryChip(b)}</td>
       <td class="muted">${marketSummary(b)}</td>
       <td><input data-field="website" data-id="${b.id}" value="${b.website || ""}" /></td>
@@ -279,7 +368,7 @@ function renderBrands() {
       </td>
     `;
     brandsBody.appendChild(tr);
-  }
+  });
   attachRowEvents();
   updateSelectedCount();
   renderFilterTabs();
@@ -518,6 +607,8 @@ async function loadBrands() {
   const data = await res.json();
   brands = data.brands || [];
   batch = data.batch;
+  latestBatchName = data.batchName || null;
+  latestBatchUploadedAt = data.batchUploadedAt || null;
   renderBrands();
 }
 
@@ -758,6 +849,40 @@ function sortByValue(list) {
   });
 }
 
+// Sağ üstte sabit kalan ilerleme kartı — toplu gönderim ya da toplu email arama
+// sırasında kullanıcı sayfanın neresinde olursa olsun ne kadar ilerlendiğini
+// görebilsin diye. Aynı kart her iki işlem için de (başlık değiştirilerek)
+// tekrar kullanılıyor.
+function showProgressToast(title) {
+  const el = document.getElementById("progressToast");
+  el.classList.remove("done");
+  document.getElementById("progressToastTitle").textContent = title;
+  document.getElementById("progressToastSub").textContent = "";
+  document.getElementById("progressToastFill").style.width = "0%";
+  document.getElementById("progressToastCount").textContent = "0/0";
+  el.style.display = "";
+}
+
+function updateProgressToast(done, total, currentName) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  document.getElementById("progressToastSub").textContent = currentName
+    ? `İşleniyor: ${currentName}`
+    : "";
+  document.getElementById("progressToastFill").style.width = `${pct}%`;
+  document.getElementById("progressToastCount").textContent = `${done}/${total}`;
+}
+
+function finishProgressToast(doneCount) {
+  const el = document.getElementById("progressToast");
+  el.classList.add("done");
+  document.getElementById("progressToastSub").textContent = `✓ ${doneCount} tamamlandı`;
+  document.getElementById("progressToastFill").style.width = "100%";
+  // Birkaç saniye "tamamlandı" olarak görünür kalsın, sonra kendiliğinden kaybolsun.
+  setTimeout(() => {
+    el.style.display = "none";
+  }, 4000);
+}
+
 async function sendBatch(targets) {
   if (targets.length === 0) return alert("Gönderilecek e-mail yok.");
 
@@ -775,11 +900,14 @@ async function sendBatch(targets) {
 
   if (!confirm(`${targets.length} markaya mail gönderilecek. Onaylıyor musun?`)) return;
   document.getElementById("sendStatus").textContent = `0/${targets.length}`;
+  showProgressToast(`📤 Toplu Gönderim (${targets.length})`);
   let done = 0;
   for (const b of targets) {
+    updateProgressToast(done, targets.length, b.name);
     await sendToBrand(b.id);
     done++;
     document.getElementById("sendStatus").textContent = `${done}/${targets.length}`;
+    updateProgressToast(done, targets.length, b.name);
     // Her mail arasında SABİT bir süre beklemek yerine rastgele bir aralık (2-5 sn)
     // kullanıyoruz — art arda tamamen düzenli aralıklarla giden mailler otomasyon
     // gibi göründüğü için bazı spam filtrelerinde şüphe uyandırabilir; insan eliyle
@@ -788,7 +916,47 @@ async function sendBatch(targets) {
     await new Promise((r) => setTimeout(r, jitter));
   }
   document.getElementById("sendStatus").textContent = "Tamamlandı.";
+  finishProgressToast(done);
 }
+
+// İşaretlediğin (checkbox) markalar için tek tek email arama başlatır — "Tüm
+// markalar için email ara" tüm listeyi tararken, bu sadece seçtiklerini hedefler
+// (ör. "Bulunamayanlar" sekmesinden birkaçını işaretleyip sadece onları tekrar
+// aratmak istediğinde). Mevcut tekli "Ara" butonuyla aynı endpoint'i kullanır,
+// sadece sırayla ve ilerleme göstererek birden fazlasını art arda çağırır.
+async function findEmailBatch(targets) {
+  if (targets.length === 0) return alert("Önce tablodan en az bir marka seç (checkbox).");
+  const statusEl = document.getElementById("findSelectedStatus");
+  statusEl.textContent = `0/${targets.length}`;
+  showProgressToast(`🔍 Email Arama (${targets.length})`);
+  let done = 0;
+  for (const b of targets) {
+    updateProgressToast(done, targets.length, b.name);
+    try {
+      const res = await fetch(`/api/brands/${b.id}/find-email`, { method: "POST" });
+      const data = await res.json();
+      if (data.brand) {
+        const idx = brands.findIndex((x) => x.id === data.brand.id);
+        if (idx !== -1) brands[idx] = data.brand;
+      }
+    } catch (e) {
+      // Bir markada hata olsa bile diğerlerini aramaya devam et.
+    }
+    done++;
+    statusEl.textContent = `${done}/${targets.length}`;
+    updateProgressToast(done, targets.length, b.name);
+    renderBrands();
+    // Art arda çok hızlı istek atmamak için markalar arasına kısa bir bekleme.
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  statusEl.textContent = "Tamamlandı.";
+  finishProgressToast(done);
+}
+
+document.getElementById("findSelectedBtn").addEventListener("click", () => {
+  const targets = brands.filter((b) => selectedIds.has(String(b.id)));
+  findEmailBatch(targets);
+});
 
 document.getElementById("sendAllBtn").addEventListener("click", () => {
   const targets = sortByValue(
@@ -857,6 +1025,7 @@ selectAllCheckbox.addEventListener("change", () => {
 document.querySelectorAll(".filter-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     currentFilter = btn.dataset.filter;
+    currentPage = 1;
     if (currentFilter !== "all" && currentFilter !== "low_confidence") {
       selectedIds.clear();
       brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b)).forEach((b) => selectedIds.add(String(b.id)));

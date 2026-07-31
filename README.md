@@ -568,6 +568,61 @@ Ayrıca her marka satırının isim hücresinin altında, varsa küçük bir **"
 $X/ay"** etiketi görünür — hangi markanın hangi kategoride olduğunu tabloya bakarken
 de tek bakışta ayırt edebilirsin.
 
+## Yeni Yüklenen Sekmesi (v38)
+
+Her Excel/CSV yüklemesi artık okunabilir bir isim ve zaman damgasıyla kaydediliyor.
+Marka tablosunun üstünde **"🆕 Yeni Yüklenen"** sekmesi, SADECE en son yüklediğin
+dosyadaki markaları gösterir — hangi Excel üzerinde çalıştığını (dosya adı, kaç
+marka, ne zaman yüklendiği) hemen altındaki notta görürsün. Bir sonraki Excel'i
+yüklediğinde bu sekme otomatik olarak yeni dosyaya geçer; önceki dosyanın markaları
+ayrı bir işlem yapmana gerek kalmadan genel listenin (ve diğer durum sekmelerinin)
+arasına karışmış olur — çünkü hepsi zaten aynı birleşik tabloda tutuluyor, sadece
+"en son hangisiydi" bilgisini takip ediyoruz.
+
+## İletişim Formu Olan Markalar Artık "Bulunamayanlar"da Görünmüyor (v38)
+
+E-maili bulunamayıp sitesinde bir iletişim formu tespit edilen markalar eskiden hem
+"Bulunamayanlar" hem "📩 İletişim Formu Olanlar" sekmesinde birden görünüyordu. Artık
+sadece "İletişim Formu Olanlar" sekmesinde görünüyorlar — "Bulunamayanlar" gerçekten
+hiçbir çözüm yolu (ne e-mail ne form) bulunamayan markalara ayrıldı.
+
+## Seçilenler İçin Toplu Email Arama (v38)
+
+Tek tek "Ara" butonuna basmak yerine, tablodan birden fazla markayı checkbox'la
+işaretleyip **"Seçilenler için Email Ara"** butonuna basarak hepsi için sırayla
+(art arda çok hızlı istek atmadan, aralarına kısa bir bekleme koyarak) email arama
+başlatabilirsin — ilerleme durumu ("3/12" gibi) butonun yanında görünür. Özellikle
+"Bulunamayanlar" ya da "🆕 Yeni Yüklenen" sekmesinden birkaçını seçip sadece onları
+tekrar aratmak istediğinde kullanışlı.
+
+## Sayfalandırma ve Satır Numarası (v38)
+
+Marka tablosu artık tüm listeyi tek seferde basmak yerine sayfalara bölünüyor —
+tablonun üstünden **sayfa başına 20/50/100 ya da Tümü** seçebilir, "‹ Önceki" /
+"Sonraki ›" ile gezinebilir, "X-Y / Z marka" göstergesinden nerede olduğunu
+görebilirsin. Her satırın en solunda, o an uygulanan filtre/kategoriye göre
+sıralı bir **# numarası** var (sayfalar arasında devam eder — ör. sayfa 2'nin ilk
+satırı sayfa boyutu 20 ise 21 numaralıdır). Bir durum sekmesine ya da kategoriye
+tıkladığında sayfa otomatik olarak 1'e döner.
+
+## Yeniden Tasarlanan Sol Menü (v39)
+
+Sol menü artık her sayfa için ikon + kalın başlık + kısa açıklama satırı gösteriyor
+("OPERASYON" başlığı altında): **Dashboard** (Günün özeti & odağı, eski "Özet"),
+**Marka Keşif** (Liste yükle & e-posta bul, eski "Panel"), **Mail Merkezi** (Gelen &
+olumlu dönüşler, eski "Gönderim Takibi" — yanında toplam yanıt sayısını gösteren bir
+rozet var). Sayfaların kendisi ve işlevleri değişmedi, sadece isimlendirme ve menü
+görünümü daha açıklayıcı hale geldi. Menü hâlâ fare üzerine gelince açılan dar bir
+şerit — küçük ekranlarda (mobil) üstte yatay bir çubuğa dönüşüyor.
+
+## Sağ Üstte Gönderim/Arama İlerleme Kartı (v40)
+
+Toplu gönderim ("Seçilenleri Gönder" / "Bulunan tüm e-maillere gönder") ya da toplu
+email arama ("Seçilenler için Email Ara") başlattığında, ekranın sağ üstünde sabit
+kalan küçük bir kart beliriyor — hangi markanın işlendiğini, ilerleme çubuğunu ve
+"X/Y" sayacını gösteriyor. Sayfada aşağı kaydırsan bile bu kart yerinde kalır,
+işlem bitince "✓ Tamamlandı" yazıp birkaç saniye sonra kendiliğinden kayboluyor.
+
 ## Özet / Analitik
 
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim

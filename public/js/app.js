@@ -88,22 +88,36 @@ function hasMarketData(b) {
   );
 }
 
-// Durum filtre sekmeleri (Bulunanlar/Bulunamayanlar/Beklemede) için: bir markanın
-// hangi gruba girdiğini tek yerden belirliyoruz.
+// Durum filtre sekmeleri (Bulunanlar/Bulunamayanlar/Beklemede/İletişim Formu Olanlar)
+// için: bir markanın hangi gruba girdiğini tek yerden belirliyoruz.
+// "contact_form": e-maili bulunamamış AMA sitesinde bir iletişim formu tespit
+// edilmiş markalar — "Form Aç" ile elle mail atabileceğin markalar, bunları tek
+// tek aramak yerine bu sekmeyle hepsine kolayca ulaşabilirsin.
+function hasContactFormOnly(b) {
+  return !b.email && Boolean(b.contact_page_url);
+}
+
 function matchesFilter(b, filter) {
   if (filter === "all") return true;
   if (filter === "found") return b.status === "found";
   if (filter === "not_found") return b.status === "not_found" || b.status === "error";
   if (filter === "pending") return b.status === "pending";
+  if (filter === "contact_form") return hasContactFormOnly(b);
+  // Sistem bu domain'in/e-mail'in markaya gerçekten ait olduğundan tam emin
+  // olamadı — bunları göndermeden önce gözden geçirmen ya da "Ara" ile tekrar
+  // arattırman için kolayca tek yerde toplayan sekme.
+  if (filter === "low_confidence") return b.email && b.confidence === "low";
   return true;
 }
 
 function renderFilterTabs() {
-  const counts = { all: brands.length, found: 0, not_found: 0, pending: 0 };
+  const counts = { all: brands.length, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0 };
   for (const b of brands) {
     if (b.status === "found") counts.found++;
     else if (b.status === "not_found" || b.status === "error") counts.not_found++;
     else if (b.status === "pending") counts.pending++;
+    if (hasContactFormOnly(b)) counts.contact_form++;
+    if (b.email && b.confidence === "low") counts.low_confidence++;
   }
   const setText = (id, n) => {
     const el = document.getElementById(id);
@@ -113,6 +127,8 @@ function renderFilterTabs() {
   setText("countFound", counts.found);
   setText("countNotFound", counts.not_found);
   setText("countPending", counts.pending);
+  setText("countContactForm", counts.contact_form);
+  setText("countLowConfidence", counts.low_confidence);
   document.querySelectorAll(".filter-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.filter === currentFilter);
   });
@@ -585,10 +601,13 @@ selectAllCheckbox.addEventListener("change", () => {
 // Durum filtre sekmeleri: tıklanan sekmeye göre tabloyu filtreler VE o gruptaki
 // tüm markaları otomatik seçer ki "Seçilenleri Gönder" ile direkt o gruba
 // gönderilebilsin. "Tümü" sekmesi sadece filtreyi kaldırır, seçimi değiştirmez.
+// "⚠️ Düşük Güven" sekmesi İSTİSNA: burada amaç göndermek değil, gözden geçirip
+// tekrar aratmak — bu yüzden otomatik seçim yapmıyoruz (yanlışlıkla toplu
+// gönderilmelerini engellemek için).
 document.querySelectorAll(".filter-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     currentFilter = btn.dataset.filter;
-    if (currentFilter !== "all") {
+    if (currentFilter !== "all" && currentFilter !== "low_confidence") {
       selectedIds.clear();
       brands.filter((b) => matchesFilter(b, currentFilter)).forEach((b) => selectedIds.add(String(b.id)));
     }

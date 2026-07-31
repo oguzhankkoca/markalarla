@@ -1,4 +1,5 @@
 const trackingBody = document.getElementById("trackingBody");
+const bouncedBody = document.getElementById("bouncedBody");
 
 const DEAL_STAGE_LABELS = {
   new: "Yeni",
@@ -104,10 +105,73 @@ function renderTracking(brands) {
   });
 }
 
+// "Ulaşmayanlar" kartı: mail geri dönen (bounce) markaları ayrı ve öne çıkan bir
+// listede gösterir, her satırda sistemin o marka için yeni bir e-mail aramasını
+// tetikleyebileceğin bir buton olur. Bulunursa marka otomatik olarak bu listeden
+// kalkar (bounced sıfırlanır) ve Panel sayfasından tekrar gönderilebilir olur.
+function renderBouncedTable(bouncedBrands) {
+  bouncedBody.innerHTML = "";
+  const countEl = document.getElementById("bouncedCount");
+  const emptyMsg = document.getElementById("bouncedEmptyMsg");
+  const table = document.getElementById("bouncedTable");
+  if (countEl) countEl.textContent = bouncedBrands.length;
+
+  if (bouncedBrands.length === 0) {
+    if (table) table.style.display = "none";
+    if (emptyMsg) emptyMsg.style.display = "block";
+    return;
+  }
+  if (table) table.style.display = "";
+  if (emptyMsg) emptyMsg.style.display = "none";
+
+  for (const b of bouncedBrands) {
+    const tr = document.createElement("tr");
+    const sentAtText = b.sent_at
+      ? `${new Date(b.sent_at).toLocaleDateString("tr-TR")} (${b.days_since_sent} gün önce)`
+      : "-";
+    tr.innerHTML = `
+      <td>${b.name}</td>
+      <td class="muted">${b.email || ""}</td>
+      <td class="muted">${sentAtText}</td>
+      <td><button class="small research-btn" data-id="${b.id}" data-name="${b.name}">Tekrar E-mail Ara</button></td>
+    `;
+    bouncedBody.appendChild(tr);
+  }
+
+  document.querySelectorAll(".research-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Aranıyor...";
+      try {
+        const res = await fetch(`/api/brands/${btn.dataset.id}/find-email`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || "Aranamadı.");
+          return;
+        }
+        if (data.brand && data.brand.email) {
+          alert(`${btn.dataset.name} için yeni e-mail bulundu: ${data.brand.email}\n\nPanel sayfasından bu markaya tekrar gönderim yapabilirsin.`);
+        } else {
+          alert(`${btn.dataset.name} için yeni bir e-mail bulunamadı. Panel sayfasından elle düzenleyebilirsin.`);
+        }
+        loadTracking();
+      } catch (e) {
+        alert("Hata: " + e.message);
+        btn.disabled = false;
+        btn.textContent = "Tekrar E-mail Ara";
+      }
+    });
+  });
+}
+
 async function loadTracking() {
   const res = await fetch("/api/tracking");
   const data = await res.json();
-  renderTracking(data.brands || []);
+  const all = data.brands || [];
+  const bounced = all.filter((b) => b.bounced || b.status === "bounced");
+  const rest = all.filter((b) => !(b.bounced || b.status === "bounced"));
+  renderBouncedTable(bounced);
+  renderTracking(rest);
 }
 
 async function loadFollowupTemplate() {

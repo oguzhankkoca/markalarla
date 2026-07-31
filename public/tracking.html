@@ -30,6 +30,32 @@
         </div>
 
         <div class="card">
+          <h2>📪 Ulaşmayanlar (Mail Geri Döndü) <span class="filter-count" id="bouncedCount">0</span></h2>
+          <p class="muted">
+            "Yanıtları Kontrol Et" butonuna bastığında Gmail gelen kutusu bounce (teslim
+            edilemedi) bildirimleri için de taranır. Bir mail geri dönerse marka burada
+            listelenir — genelde e-mail adresi yanlış/eskimiştir. "Tekrar E-mail Ara"
+            butonuyla o marka için sistemin yeni bir e-mail bulmasını isteyebilirsin;
+            yeni bir e-mail bulunursa marka buradan kalkar ve panelden (Panel sayfası)
+            tekrar gönderilebilir hale gelir.
+          </p>
+          <div style="overflow-x:auto;">
+          <table id="bouncedTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>Geri Dönen E-mail</th>
+                <th>Ne Zaman Gönderilmişti</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="bouncedBody"></tbody>
+          </table>
+          </div>
+          <p class="muted" id="bouncedEmptyMsg">Şu an ulaşmayan (geri dönen) mail yok.</p>
+        </div>
+
+        <div class="card">
           <h2>✉️ Takip Mail Şablonları (3 aşamalı otomatik takip)</h2>
           <p class="muted">Yanıt gelmezse gönderim tarihinden itibaren gün 7'de 1. aşama, gün 14'te 2. aşama, gün 30'da (1 ay) 3. aşama otomatik gönderilir.</p>
 

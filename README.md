@@ -145,10 +145,17 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
      Sistem bu kadarını her gün 08:00-20:00 (UTC) arasına yayarak kendiliğinden
      gönderir, elle bir şey yapmana gerek kalmaz. 0 bırakırsan bu özellik kapalı olur.
    - **Durum filtre sekmeleri**: tablonun üstünde "Tümü / Bulunanlar / Bulunamayanlar /
-     Beklemede" sekmeleri var, her birinin yanında kaç marka olduğu yazıyor. Bir sekmeye
-     tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm markalar otomatik seçilir
-     (checkbox işaretlenir) — böylece örn. "Bulunanlar"a tıklayıp direkt "Seçilenleri
-     Gönder"e basarak sadece e-maili bulunmuş markalara gönderebilirsin.
+     Beklemede / 📩 İletişim Formu Olanlar" sekmeleri var, her birinin yanında kaç marka
+     olduğu yazıyor. Bir sekmeye tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm
+     markalar otomatik seçilir (checkbox işaretlenir) — böylece örn. "Bulunanlar"a
+     tıklayıp direkt "Seçilenleri Gönder"e basarak sadece e-maili bulunmuş markalara
+     gönderebilirsin. "İletişim Formu Olanlar" sekmesi, e-maili bulunamayıp sitesinde bir
+     iletişim formu tespit edilen markaları tek tek aramak yerine hepsini bir arada
+     gösterir — "Form Aç" ile elle mail atman gereken markalara kolayca ulaşman için.
+     "⚠️ Düşük Güven" sekmesi, sistemin bulduğu domain/e-mail'in markaya gerçekten ait
+     olduğundan tam emin olamadığı markaları tek yerde toplar — diğer sekmelerden farklı
+     olarak bu sekme tıklandığında **otomatik seçim yapılmaz** (amaç toplu göndermek değil,
+     gözden geçirmek), her markanın satırındaki "Ara" butonuyla tekrar arattırabilirsin.
    - **"Tekrarlananları Birleştir"**: aynı marka adını birden fazla Excel'de/kez
      yüklediysen (ya da tekrar önleme özelliği eklenmeden önce yüklediysen) tabloda aynı
      marka birden fazla satır olarak görünebilir — bu butona basınca sistem aynı isimli
@@ -160,11 +167,19 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
 
 Panelin sağ üstünden "Gönderim Takibi" sayfasına gidebilirsin. Bu sayfa:
 
+- **📪 Ulaşmayanlar**: sayfanın en üstünde, mail geri dönen (bounce/teslim edilemedi)
+  markaları ayrı ve öne çıkan bir kartta gösterir — genel takip listesiyle karışmaz.
+  Her satırda **"Tekrar E-mail Ara"** butonu var; bastığında sistem o marka için
+  yeniden internetten arama yapıp yeni bir e-mail bulmaya çalışır. Yeni bir e-mail
+  bulunursa marka otomatik olarak bu listeden kalkar ve Panel sayfasından tekrar
+  gönderilebilir hale gelir (eski "geri döndü" durumu temizlenir). Bulunamazsa Panel
+  sayfasından e-maili elle de düzeltebilirsin.
 - Gönderdiğin tüm mailleri, ne zaman gönderildiğini ("3 gün önce" gibi) listeler
 - **"Yanıtları Kontrol Et"** butonuna bastığında Gmail gelen kutunu tarar, hangi markalardan
-  yanıt geldiğini bulur ve basit bir anahtar kelime analiziyle **olumlu/olumsuz/belirsiz**
+  yanıt geldiğini ve hangi maillerin **geri döndüğünü (bounce)** bulur, olumlu/olumsuz/belirsiz
   tahmini yapar (kesin bir yapay zeka analizi değildir — özellikle "belirsiz" çıkanları elle
-  okuyup dropdown'dan düzeltmen önerilir)
+  okuyup dropdown'dan düzeltmen önerilir). Geri dönen mailler otomatik olarak yukarıdaki
+  "Ulaşmayanlar" kartına düşer.
 - Olumlu bir yanıt tespit edildiğinde, kendi mail adresine otomatik bir **bildirim maili**
   gönderir (bir markadan sadece bir kez bildirim gelir, tekrar tekrar gelmez)
 - **3 aşamalı otomatik takip**: yanıt gelmeyen markalara gönderim tarihinden itibaren

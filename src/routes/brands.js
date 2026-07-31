@@ -254,8 +254,12 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
 
   try {
     const result = await findBrandEmail(brand.name, brand.website);
+    // "bounced = 0": bu marka daha önce "mail geri döndü" (bounce) olarak
+    // işaretlenmiş olabilir — burada elle ya da "Tekrar E-mail Ara" ile yeniden
+    // arama yapılıyorsa, eski bounce bayrağını temizliyoruz ki yeni bulunan e-mail
+    // "Ulaşmayanlar" listesinde takılı kalmasın.
     db.prepare(
-      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?
+      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0
        WHERE id = ?`
     ).run(
       result.email,
@@ -295,7 +299,7 @@ async function processFindAllQueue() {
     try {
       const result = await findBrandEmail(brand.name, brand.website);
       db.prepare(
-        `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?
+        `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0
          WHERE id = ?`
       ).run(
         result.email,
@@ -380,6 +384,17 @@ router.put("/api/brands/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// Bir marka (yeniden) "gönderildi" durumuna her geçtiğinde, önceki gönderim
+// döngüsünden kalma takip alanlarını (bounce, yanıt, follow-up aşaması vb.)
+// sıfırlıyoruz. Bunu yapmazsak, ör. bir mail geri döndükten (bounce) sonra
+// e-maili düzeltip tekrar gönderdiğinde eski "bounced = 1" bayrağı kalıcı olarak
+// orada kalır ve sistem bu markayı bir daha ASLA yanıt/bounce taramasına almaz
+// (runFullCheck'teki "WHERE ... bounced = 0" filtresine sonsuza dek takılır).
+const RESET_TRACKING_ON_SEND_SQL = `
+  bounced = 0, replied = 0, reply_sentiment = NULL, reply_snippet = NULL, reply_from = NULL,
+  notified = 0, follow_up_stage = 0, last_follow_up_at = NULL, last_checked_at = NULL
+`;
+
 // Bir markaya, sistemin mailer'ı yerine iletişim formu üzerinden elle mail
 // gönderildiğinde ("Form Aç" ile form açılıp içerik yapıştırıldıktan sonra),
 // bunu sisteme "gönderildi" olarak işaretlemek için. Bu marka artık tekrar
@@ -390,7 +405,7 @@ router.post("/api/brands/:id/mark-contact-sent", (req, res) => {
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
 
   db.prepare(
-    "UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_via = 'contact_form' WHERE id = ?"
+    `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_via = 'contact_form', ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
   ).run(brand.id);
   db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
     brand.id,
@@ -409,9 +424,9 @@ router.post("/api/brands/:id/send", async (req, res) => {
   const { subject, body } = req.body;
   try {
     await mailer.sendMail({ to: brand.email, subject, body });
-    db.prepare("UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?").run(
-      brand.id
-    );
+    db.prepare(
+      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+    ).run(brand.id);
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
       brand.id,
       `${brand.email} adresine gönderildi.`
@@ -458,7 +473,9 @@ async function runAutoSend() {
   const body = fillTemplateLocal(settings.main_body, candidate.name);
   try {
     await mailer.sendMail({ to: candidate.email, subject, body });
-    db.prepare("UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE id = ?").run(candidate.id);
+    db.prepare(
+      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+    ).run(candidate.id);
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
       candidate.id,
       `Otomatik günlük gönderim (limit: ${limit}/gün): ${candidate.email}`

@@ -1,5 +1,6 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
+const net = require("net");
 const ai = require("./ai");
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
@@ -213,6 +214,7 @@ function cleanEmails(rawEmails, domain) {
     const isObj = raw && typeof raw === "object";
     const rawValue = isObj ? raw.value : raw;
     const hunterConfidence = isObj && typeof raw.confidence === "number" ? raw.confidence : null;
+    const phone = isObj && raw.phone ? raw.phone : null;
     if (!rawValue) continue;
     const email = rawValue.trim().toLowerCase().replace(/[.,;]+$/, "");
     if (seen.has(email)) continue;
@@ -225,6 +227,7 @@ function cleanEmails(rawEmails, domain) {
       sameDomain: domain ? emailDomain.includes(domain) : false,
       generic: GENERIC_LOCAL_PARTS.includes(email.split("@")[0]),
       hunterConfidence,
+      phone,
     });
   }
   list.sort((a, b) => {
@@ -302,7 +305,40 @@ function extractCandidates(results, sourceName, trace) {
 // kısmını içeriyor olabilir, ama sadece biri gerçek). Amaç: yanlış siteye/e-maile
 // gitme hata oranını mümkün olduğunca aza indirmek — bunun karşılığında biraz daha
 // fazla API çağrısı/gecikme kabul ediliyor.
-async function pickBestDomainWithAI(brandName, candidates, trace) {
+// Excel'den gelen SmartScout-tarzı marka verisini (Amazon kategori bilgisi ve/veya
+// Amazon mağaza sayfasından çekilen açıklama metni) AI prompt'larına eklenecek kısa
+// bir bağlam bloğuna çevirir. Hiçbiri yoksa boş string döner (prompt eskisi gibi kalır).
+function buildBrandContextBlock(context) {
+  if (!context) return "";
+  const lines = [];
+  if (context.mainCategory) {
+    lines.push(
+      `Amazon kategorisi: ${context.mainCategory}${context.subcategory ? ` > ${context.subcategory}` : ""}`
+    );
+  }
+  if (context.storefrontInfo && context.storefrontInfo.description) {
+    lines.push(`Amazon mağaza sayfasından alınan marka açıklaması: ${context.storefrontInfo.description.slice(0, 500)}`);
+  }
+  if (context.linkedinInfo && (context.linkedinInfo.title || context.linkedinInfo.snippet)) {
+    lines.push(
+      `LinkedIn şirket sayfası bulundu (${context.linkedinInfo.url}) — başlık/özet: ${(context.linkedinInfo.title + " " + context.linkedinInfo.snippet).trim().slice(0, 300)}`
+    );
+  }
+  if (context.domainAgeInfo && typeof context.domainAgeInfo.ageDays === "number") {
+    const years = (context.domainAgeInfo.ageDays / 365).toFixed(1);
+    if (context.domainAgeInfo.ageDays < 180) {
+      lines.push(
+        `DİKKAT: Bu domain WHOIS kaydına göre sadece ${context.domainAgeInfo.ageDays} gün önce kaydedilmiş — çok yeni bir domain, gerçek/köklü bir markanın resmi sitesi olma ihtimali daha düşük (yeni kaydedilmiş/parked bir domain olabilir).`
+      );
+    } else {
+      lines.push(`Bu domain WHOIS kaydına göre yaklaşık ${years} yıldır kayıtlı — köklü bir domain olması olumlu bir sinyal.`);
+    }
+  }
+  if (lines.length === 0) return "";
+  return `\nEK BAĞLAM (Excel/Amazon verisinden, doğruluğu garanti değil ama yardımcı bir ipucu):\n${lines.join("\n")}\nBu bilgi, adayın gerçekten bu markayla uyumlu olup olmadığını değerlendirirken ek bir sinyal olarak kullanılabilir (ör. kategori tamamen alakasızsa şüphelen).\n`;
+}
+
+async function pickBestDomainWithAI(brandName, candidates, trace, context) {
   if (!ai.isConfigured() || candidates.length === 0) return null;
   const list = candidates
     .map((c, i) => {
@@ -312,12 +348,13 @@ async function pickBestDomainWithAI(brandName, candidates, trace) {
       return `${i + 1}. ${bits.join(" | ")}`;
     })
     .join("\n");
+  const contextBlock = buildBrandContextBlock(context);
   const prompt = `Bir Amazon toptan satış/distribütörlük şirketi için marka web sitesi doğrulaması
 yapıyorsun. Bu doğrulama YANLIŞ bir siteye iş teklifi maili gitmesini önlemek için kritik önemde —
 son derece dikkatli ve şüpheci ol.
 
 Aranan marka: "${brandName}"
-
+${contextBlock}
 Google arama sonuçlarından bulunan aday domainler:
 ${list}
 
@@ -359,7 +396,7 @@ Sadece şu JSON formatında cevap ver, başka hiçbir açıklama ekleme:
 // devam ediyordu. Artık aday listesinin tamamını sırayla döndürüyoruz ki çağıran taraf
 // (findOfficialDomainViaSearch) ilk aday doğrulamayı geçemezse bir sonrakini —
 // aynı arama sonucundan, EK bir API isteği harcamadan — deneyebilsin.
-async function rankCandidateDomains(candidates, sourceName, brandName, trace) {
+async function rankCandidateDomains(candidates, sourceName, brandName, trace, context) {
   if (candidates.length === 0) return [];
   trace.push(`${sourceName} adayları: ${candidates.map((c) => c.domain).join(", ")}`);
 
@@ -560,6 +597,159 @@ async function searchViaDuckDuckGo(brandName, trace, query, attempt = 1) {
   }
 }
 
+// LinkedIn şirket sayfası ek doğrulama sinyali: markanın gerçek/aktif bir şirket
+// olduğunu gösteren ek bir ipucu olarak, "{marka} linkedin" aramasında çıkan bir
+// linkedin.com/company sonucunun başlık/özetini yakalamaya çalışır. NOT: LinkedIn
+// sayfasının kendisini AÇIP okumuyoruz (LinkedIn oturum açmamış isteklere neredeyse
+// her zaman bir "giriş yap" duvarı gösterir, Amazon mağaza sayfalarına benzer bir
+// bot-engelleme sorunu) — bunun yerine arama motorunun ZATEN indekslediği başlık/özet
+// metnini kullanıyoruz, bu yüzden LinkedIn'e hiç istek atmadan da çalışabilir. Bulursa
+// bunu AI doğrulama bağlamına ek bir sinyal olarak ekliyoruz (buildBrandContextBlock);
+// bulamazsa (çoğu zaman böyle olacaktır) sessizce null döner, akışı hiç etkilemez.
+async function findLinkedInSignal(brandName, trace) {
+  const query = `${brandName} company linkedin`;
+
+  function pickFromResults(results) {
+    for (const r of results || []) {
+      const link = r && (r.link || r.url);
+      if (!link) continue;
+      if (/linkedin\.com\/company\//i.test(link)) {
+        return { url: link, title: r.title || "", snippet: r.snippet || "" };
+      }
+    }
+    return null;
+  }
+
+  try {
+    if (process.env.SERPER_API_KEY && Date.now() >= serperRestUntil) {
+      const { data, status } = await httpClient.post(
+        "https://google.serper.dev/search",
+        { q: query },
+        { headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" } }
+      );
+      if (status === 200 && !isQuotaError(status, data)) {
+        const found = pickFromResults(data.organic);
+        if (found) return found;
+      }
+    }
+  } catch (e) {
+    trace.push(`LinkedIn sinyali için Serper.dev denemesi başarısız: ${e.message}`);
+  }
+
+  try {
+    if (process.env.SERPAPI_KEY && Date.now() >= serpApiRestUntil) {
+      const { data, status } = await httpClient.get("https://serpapi.com/search.json", {
+        params: { q: query, api_key: process.env.SERPAPI_KEY, num: 10 },
+      });
+      if (status === 200 && !isQuotaError(status, data) && !data.error) {
+        const found = pickFromResults(data.organic_results);
+        if (found) return found;
+      }
+    }
+  } catch (e) {
+    trace.push(`LinkedIn sinyali için SerpAPI denemesi başarısız: ${e.message}`);
+  }
+
+  try {
+    const { data } = await httpClient.get("https://html.duckduckgo.com/html/", {
+      params: { q: query },
+      timeout: 15000,
+    });
+    const $ = cheerio.load(data);
+    let found = null;
+    $(".result__a").each((_, el) => {
+      if (found) return;
+      const $el = $(el);
+      const link = $el.attr("href");
+      if (!link) return;
+      const urlMatch = link.match(/uddg=([^&]+)/);
+      const target = urlMatch ? decodeURIComponent(urlMatch[1]) : link;
+      if (/linkedin\.com\/company\//i.test(target)) {
+        const title = $el.text().trim();
+        const snippet = $el.closest(".result").find(".result__snippet").text().trim();
+        found = { url: target, title, snippet };
+      }
+    });
+    if (found) return found;
+  } catch (e) {
+    trace.push(`LinkedIn sinyali için DuckDuckGo denemesi başarısız: ${e.message}`);
+  }
+
+  return null;
+}
+
+// Domain yaşı (WHOIS) sinyali: yeni npm paketi kurmadan, Node'un yerleşik `net`
+// modülüyle ham WHOIS protokolüne (port 43) doğrudan bağlanıyoruz. En yaygın
+// TLD'ler için bilinen WHOIS sunucularını kullanıyoruz; kapsam dışı bir TLD ise
+// ya da sorgu başarısız/zaman aşımına uğrarsa (WHOIS sunucuları bazı bulut/veri
+// merkezi IP'lerini kısıtlayabiliyor) sessizce null dönüyoruz — Amazon mağaza
+// sayfası ve LinkedIn sinyalleriyle aynı "best-effort, hiçbir şeyi bozmaz" mantığı.
+const WHOIS_SERVERS = {
+  com: "whois.verisign-grs.com",
+  net: "whois.verisign-grs.com",
+  org: "whois.pir.org",
+  info: "whois.afilias.net",
+  biz: "whois.nic.biz",
+  co: "whois.nic.co",
+  io: "whois.nic.io",
+  us: "whois.nic.us",
+  shop: "whois.nic.shop",
+  store: "whois.nic.store",
+};
+
+function rawWhoisQuery(server, domain) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: server, port: 43 });
+    let data = "";
+    socket.setTimeout(5000);
+    socket.on("connect", () => socket.write(domain + "\r\n"));
+    socket.on("data", (chunk) => (data += chunk.toString("utf8")));
+    socket.on("end", () => resolve(data));
+    socket.on("timeout", () => {
+      socket.destroy();
+      reject(new Error("WHOIS sorgusu zaman aşımına uğradı"));
+    });
+    socket.on("error", (err) => reject(err));
+  });
+}
+
+const WHOIS_DATE_PATTERNS = [
+  /creation date:\s*(.+)/i,
+  /created on:\s*(.+)/i,
+  /created:\s*(.+)/i,
+  /registered on:\s*(.+)/i,
+  /domain registration date:\s*(.+)/i,
+  /registration time:\s*(.+)/i,
+];
+
+async function getDomainAgeInfo(domain, trace) {
+  try {
+    const tld = domain.split(".").pop().toLowerCase();
+    const server = WHOIS_SERVERS[tld];
+    if (!server) return null; // kapsam dışı TLD, sessizce atla
+
+    const raw = await rawWhoisQuery(server, domain);
+    let createdAt = null;
+    for (const pattern of WHOIS_DATE_PATTERNS) {
+      const match = raw.match(pattern);
+      if (match) {
+        const parsed = new Date(match[1].trim());
+        if (!isNaN(parsed.getTime())) {
+          createdAt = parsed;
+          break;
+        }
+      }
+    }
+    if (!createdAt) return null;
+
+    const ageDays = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+    return { ageDays, createdAt };
+  } catch (e) {
+    trace.push(`Domain yaşı (WHOIS) sorgusu başarısız (${domain}): ${e.message}`);
+    return null;
+  }
+}
+
 // Aday domain listesini sırayla dener, ana sayfasını doğrulayıp GERÇEKTEN markaya
 // ait görünen ilk domaini döner. Bir aday reddedilirse (verifyDomainIsBrand ok:false
 // derse) EK bir arama isteği harcamadan bir sonraki adaya geçer — bu, "sistem yanlış
@@ -567,9 +757,9 @@ async function searchViaDuckDuckGo(brandName, trace, query, attempt = 1) {
 // olursa olsun kullanılıyordu, artık markaya ait olmadığı anlaşılan bir site asla
 // kullanılmıyor. En fazla ilk 3 adayı dener (her biri bir sayfa taraması gerektirdiği
 // için maliyeti/süreyi sınırlı tutmak amacıyla).
-async function verifyCandidateList(brandName, domains, trace) {
+async function verifyCandidateList(brandName, domains, trace, context) {
   for (const domain of domains.slice(0, 3)) {
-    const verdict = await verifyDomainIsBrand(brandName, domain, trace);
+    const verdict = await verifyDomainIsBrand(brandName, domain, trace, context);
     if (verdict.ok && verdict.confidence !== "low") {
       trace.push(`"${domain}" doğrulandı (güven: ${verdict.confidence}), kullanılıyor.`);
       return { domain, confidence: verdict.confidence };
@@ -578,7 +768,7 @@ async function verifyCandidateList(brandName, domains, trace) {
   return null;
 }
 
-async function findOfficialDomainViaSearch(brandName, trace) {
+async function findOfficialDomainViaSearch(brandName, trace, context) {
   // Hiçbir aday kesin doğrulanamazsa bile elimizde en azından bir "düşük güvenli"
   // yedek olsun istiyoruz — hiç sonuç döndürmemekten (kullanıcının elle aramak
   // zorunda kalması) daha iyidir, ama panelde açıkça "düşük güven" olarak işaretlenir.
@@ -621,8 +811,8 @@ async function findOfficialDomainViaSearch(brandName, trace) {
       dedupedCandidates.push(c);
     }
 
-    const uniqueDomains = await rankCandidateDomains(dedupedCandidates, "arama sonuçları", brandName, trace);
-    const verified = await verifyCandidateList(brandName, uniqueDomains, trace);
+    const uniqueDomains = await rankCandidateDomains(dedupedCandidates, "arama sonuçları", brandName, trace, context);
+    const verified = await verifyCandidateList(brandName, uniqueDomains, trace, context);
     if (verified) return verified;
 
     if (!lowConfidenceFallback && uniqueDomains[0]) {
@@ -653,7 +843,7 @@ async function findOfficialDomainViaSearch(brandName, trace) {
         const { status } = await httpClient.get(`https://${guessedDomain}`, { timeout: 6000 });
         if (status < 400) {
           trace.push(`Tahmin edilen domain çalışıyor: ${guessedDomain}, doğrulanıyor...`);
-          const verdict = await verifyDomainIsBrand(brandName, guessedDomain, trace);
+          const verdict = await verifyDomainIsBrand(brandName, guessedDomain, trace, context);
           if (verdict.ok) {
             return { domain: guessedDomain, confidence: verdict.confidence };
           }
@@ -687,6 +877,10 @@ async function findEmailsViaHunter(domain, trace) {
     const emails = rawEmails.map((e) => ({
       value: e.value,
       confidence: typeof e.confidence === "number" ? e.confidence : null,
+      // Hunter bazı e-mail kayıtları için bir telefon numarası da döndürebiliyor
+      // (nadiren dolu oluyor, ama doluysa markayı doğrudan aramak için değerli
+      // ekstra bir kanal — panelde gösteriyoruz, başka bir işlem yapmıyoruz).
+      phone: e.phone_number || null,
     }));
     const confidences = emails.map((e) => e.confidence).filter((c) => c !== null);
     trace.push(
@@ -732,16 +926,72 @@ async function scrapePage(url, trace) {
   }
 }
 
+// Excel'deki "Storefront Url" sütunu genelde bir Amazon marka mağazası linkidir
+// (amazon.com/stores/BrandName/page/...). Bunu taramaya çalışıyoruz çünkü Amazon
+// bazen mağaza sayfasında kısa bir "marka hakkında" açıklaması gösterir — bu, aday
+// sitenin gerçekten bu markayla örtüşüp örtüşmediğini AI'ın değerlendirmesine yardımcı
+// olabilir. ÖNEMLİ UYARI: (1) Amazon, Store sayfalarında markaların dışarıya link
+// vermesine genelde izin vermez, yani bir "resmi website" linki bulma ihtimali düşük —
+// bu yüzden bunu ana kaynak değil, bir BONUS ipucu olarak kullanıyoruz. (2) Amazon,
+// veri merkezi IP'lerinden (Render dahil) gelen istekleri sıklıkla engeller/CAPTCHA
+// gösterir — bu yüzden bu fonksiyon büyük ihtimalle çoğu zaman boş dönecektir, bu
+// beklenen bir durumdur ve hiçbir hata fırlatmaz, sistem sessizce normal aramaya devam eder.
+async function scrapeAmazonStorefront(storefrontUrl, trace) {
+  try {
+    const { data, status } = await httpClient.get(storefrontUrl, { timeout: 8000 });
+    if (status >= 400 || typeof data !== "string" || data.length < 200) {
+      trace.push(`Amazon mağaza sayfası (${storefrontUrl}) erişilemedi/engellenmiş görünüyor (HTTP ${status}), atlanıyor.`);
+      return null;
+    }
+    // Amazon'un bot koruması genelde bir "robot check"/captcha sayfası döndürür —
+    // bunu tespit edip gerçek bir sayfa gibi işlemeyi önlüyoruz.
+    if (/captcha|robot check|are you a human/i.test(data)) {
+      trace.push(`Amazon mağaza sayfası bot korumasına takıldı (captcha), atlanıyor.`);
+      return null;
+    }
+    const $ = cheerio.load(data);
+    const title = $("title").text().trim();
+    const bodyText = $("body").text().replace(/\s+/g, " ").trim();
+
+    // Amazon Store sayfaları politikası gereği dışarıya link vermeyi genelde
+    // engeller; yine de nadir/eski bir sayfada olabilir diye kontrol ediyoruz.
+    // amazon.com'a, statik CDN'lerine (media-amazon, ssl-images-amazon) ve bilinen
+    // takip/politika linklerine ait olmayan ilk https link'i "dış link adayı" sayıyoruz.
+    let externalLink = null;
+    $("a[href^='http']").each((_, el) => {
+      if (externalLink) return;
+      const href = $(el).attr("href") || "";
+      try {
+        const host = new URL(href).hostname.replace(/^www\./, "");
+        if (/amazon\.|media-amazon\.|ssl-images-amazon\.|associates-amazon\./i.test(host)) return;
+        if (!isOfficialLookingDomain(host)) return;
+        externalLink = host;
+      } catch (e) {
+        // geçersiz url, atla
+      }
+    });
+
+    trace.push(
+      `Amazon mağaza sayfası okundu${externalLink ? ` (dış link bulundu: ${externalLink})` : " (dış link yok, sadece açıklama kullanılacak)"}.`
+    );
+    return { title, description: bodyText.slice(0, 800), externalLink };
+  } catch (e) {
+    trace.push(`Amazon mağaza sayfası (${storefrontUrl}) okunamadı: ${e.message} — bu beklenir (Amazon bulut IP'lerini sık engeller), normal aramaya devam ediliyor.`);
+    return null;
+  }
+}
+
 // Ana sayfa metninde heuristik (marka adı geçiyor mu) belirsiz/olumsuz çıktığında,
 // AI tanımlıysa Claude'a "bu sayfa gerçekten bu markaya mı ait?" diye sorar. Sadece
 // bu belirsiz durumlarda çağrılır (her marka için değil), maliyeti düşük tutar.
-async function verifyHomepageWithAI(brandName, domain, pageTitle, pageText, trace) {
+async function verifyHomepageWithAI(brandName, domain, pageTitle, pageText, trace, context) {
   if (!ai.isConfigured()) return null;
+  const contextBlock = buildBrandContextBlock(context);
   const prompt = `"${domain}" adresindeki bir web sitesinin "${brandName}" markasının GERÇEK
 resmi/kurumsal sitesi olup olmadığını değerlendiriyorsun. Bu bir Amazon toptan satış/distribütörlük
 şirketinin iş teklifi maili göndereceği adresi belirlemek için kritik bir kontrol — yanlış siteyi
 onaylarsan mail tamamen alakasız bir şirkete/kişiye gidebilir, bu yüzden dikkatli ve şüpheci ol.
-
+${contextBlock}
 Sayfa başlığı: ${pageTitle || "(yok)"}
 Sayfa içeriğinden örnek metin: ${(pageText || "").slice(0, 1200) || "(yok)"}
 
@@ -779,7 +1029,7 @@ Sadece şu JSON formatında cevap ver, başka açıklama ekleme:
 // içinde bir kere yapılıyor ve olumsuz çıksa bile domain yine de kullanılıyordu (sadece
 // trace'e uyarı yazılıyordu). Artık "ok: false" dönerse çağıran taraf bu domain'i
 // GERÇEKTEN reddedip bir sonraki adaya geçiyor.
-async function verifyDomainIsBrand(brandName, domain, trace) {
+async function verifyDomainIsBrand(brandName, domain, trace, context) {
   const home = await scrapePage(`https://${domain}`, trace);
   const normPageText = normalizeForMatch(home.text);
   const mainToken = coreBrandTokens(brandName).sort((a, b) => b.length - a.length)[0];
@@ -793,7 +1043,10 @@ async function verifyDomainIsBrand(brandName, domain, trace) {
   // istediği için, AI mevcutsa onun nihai kararına güveniyoruz; AI yoksa (ya da
   // yanıt veremezse) eskisi gibi heuristiğe geri dönüyoruz.
   if (ai.isConfigured()) {
-    const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace);
+    // WHOIS sorgusu ekstra bir ağ isteği/gecikme gerektirdiği için sadece AI
+    // gerçekten bu bağlamı kullanacaksa çalıştırılıyor.
+    context.domainAgeInfo = await getDomainAgeInfo(domain, trace);
+    const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace, context);
     if (aiVerdict) {
       if (!aiVerdict.is_official) {
         trace.push(`"${domain}" reddedildi: AI bu sitenin "${brandName}" markasına ait olmadığını düşünüyor, başka bir aday deneniyor.`);
@@ -863,12 +1116,53 @@ function blendConfidence(domainConfidence, emailMatchesDomain, hunterConfidence)
   return "medium";
 }
 
-async function findBrandEmail(brandName, providedWebsite) {
+// extra: { mainCategory, subcategory, storefrontUrl } — SmartScout-tarzı Excel
+// sütunlarından (varsa) gelen ek bağlam. Hiçbiri yoksa davranış tamamen eskisi gibidir.
+async function findBrandEmail(brandName, providedWebsite, extra = {}) {
   const trace = [];
   let domain = null;
   let domainConfidence = "unknown";
 
-  if (providedWebsite && looksLikeDomain(providedWebsite)) {
+  const context = {
+    mainCategory: extra.mainCategory || null,
+    subcategory: extra.subcategory || null,
+    storefrontInfo: null,
+    linkedinInfo: null,
+  };
+
+  // 0) Amazon mağaza sayfası varsa bir kez taramayı dene (bonus sinyal — bloklanırsa
+  // sessizce atlanır, hiçbir şeyi bozmaz). Nadiren de olsa bir dış link bulunursa,
+  // onu ÖNCELİKLE doğrulayıp kullanmayı deniyoruz — bu, Amazon'un markaya atfettiği
+  // bir bilgi olduğu için güçlü bir sinyal sayılır, ama yine de körü körüne güvenmiyoruz,
+  // aynı merkezi doğrulamadan (verifyDomainIsBrand) geçiriyoruz.
+  if (extra.storefrontUrl && /^https?:\/\//i.test(extra.storefrontUrl)) {
+    context.storefrontInfo = await scrapeAmazonStorefront(extra.storefrontUrl, trace);
+    if (context.storefrontInfo && context.storefrontInfo.externalLink) {
+      const verdict = await verifyDomainIsBrand(brandName, context.storefrontInfo.externalLink, trace, context);
+      if (verdict.ok && verdict.confidence !== "low") {
+        domain = context.storefrontInfo.externalLink;
+        // Amazon'un kendi mağaza sayfasından geldiği için ekstra bir korobasyon sayılır.
+        domainConfidence = verdict.confidence === "medium" ? "high" : verdict.confidence;
+        trace.push(`Amazon mağaza sayfasından bulunan dış link doğrulandı ve kullanılıyor: ${domain} (güven: ${domainConfidence})`);
+      }
+    }
+  }
+
+  // 0.5) LinkedIn şirket sayfası sinyali: sadece AI tanımlıysa aranır (heuristik bu
+  // bağlamı zaten kullanmıyor, tanımlı değilse arama kotasını boşa harcamamak için
+  // atlanır) VE domain Amazon mağaza sayfasından çoktan kesin bulunmadıysa (o zaten
+  // yeterince güçlü bir sinyal, ekstra bir arama isteğine gerek yok).
+  if (!domain && ai.isConfigured()) {
+    context.linkedinInfo = await findLinkedInSignal(brandName, trace);
+    if (context.linkedinInfo) {
+      trace.push(`LinkedIn şirket sayfası bulundu, ek bağlam olarak kullanılacak: ${context.linkedinInfo.url}`);
+    }
+  }
+
+  if (domain) {
+    // Amazon mağaza linki zaten doğrulanıp kabul edildi, aşağıdaki arama adımları
+    // tamamen atlanıyor (hem daha hızlı hem de gereksiz API kotası harcanmıyor).
+  } else if (providedWebsite && looksLikeDomain(providedWebsite)) {
     const candidateDomain = providedWebsite
       .replace(/^https?:\/\//, "")
       .replace(/^www\./, "")
@@ -882,7 +1176,7 @@ async function findBrandEmail(brandName, providedWebsite) {
       // Excel'den gelen website de yanlış olabilir (yazım hatası, eski/güncel olmayan
       // bilgi, başka bir markayla karışmış satır vb.) — o yüzden bunu da körü körüne
       // güvenmiyoruz, aynı merkezi doğrulamadan geçiriyoruz.
-      const verdict = await verifyDomainIsBrand(brandName, candidateDomain, trace);
+      const verdict = await verifyDomainIsBrand(brandName, candidateDomain, trace, context);
       if (verdict.ok) {
         domain = candidateDomain;
         domainConfidence = verdict.confidence;
@@ -891,7 +1185,7 @@ async function findBrandEmail(brandName, providedWebsite) {
         trace.push(
           `Excel'den verilen website ("${candidateDomain}") markaya ait görünmüyor, resmi site aranıyor.`
         );
-        const found = await findOfficialDomainViaSearch(brandName, trace);
+        const found = await findOfficialDomainViaSearch(brandName, trace, context);
         if (found) {
           domain = found.domain;
           domainConfidence = found.confidence;
@@ -901,7 +1195,7 @@ async function findBrandEmail(brandName, providedWebsite) {
       trace.push(
         `Excel'den verilen website bir pazar yeri/sosyal medya linkiydi ("${candidateDomain}"), markanın kendi sitesi olarak kabul edilmedi, resmi site aranıyor.`
       );
-      const found = await findOfficialDomainViaSearch(brandName, trace);
+      const found = await findOfficialDomainViaSearch(brandName, trace, context);
       if (found) {
         domain = found.domain;
         domainConfidence = found.confidence;
@@ -911,7 +1205,7 @@ async function findBrandEmail(brandName, providedWebsite) {
     if (providedWebsite) {
       trace.push(`Excel'deki website değeri geçerli bir domain gibi görünmüyor ("${providedWebsite}"), aramaya geçiliyor.`);
     }
-    const found = await findOfficialDomainViaSearch(brandName, trace);
+    const found = await findOfficialDomainViaSearch(brandName, trace, context);
     if (found) {
       domain = found.domain;
       domainConfidence = found.confidence;
@@ -938,6 +1232,7 @@ async function findBrandEmail(brandName, providedWebsite) {
         source: "hunter.io",
         confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain, cleaned[0].hunterConfidence),
         contactUrl: null,
+        phone: cleaned[0].phone || null,
         trace,
       };
     }

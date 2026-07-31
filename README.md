@@ -134,6 +134,25 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
      indirmek istiyorsan bir Anthropic API anahtarı edinip Render'da ANTHROPIC_API_KEY olarak
      tanımlamanı öneririm** (https://console.anthropic.com — ayrı, kullandıkça öder bir hesap;
      Haiku modeli ucuzdur).
+   - **Excel'deki Amazon verisi (kategori + mağaza sayfası) artık doğrulamaya dahil ediliyor.**
+     Excel'inde "Main Category" / "Primary Subcategory" ve "Storefront Url" sütunları varsa
+     (SmartScout-tarzı dosyalarda genelde olur), sistem bunları şöyle kullanıyor:
+     1) **Kategori bağlamı**: "Bu marka Amazon'da Mutfak Aletleri kategorisinde satıyor" gibi
+        bir bilgi, hem aday site seçiminde hem de ana sayfa doğrulamasında AI'a ek bir ipucu
+        olarak veriliyor — bulunan site tamamen alakasız bir kategoride ürün satıyorsa (ör.
+        yazılım, emlak) AI bunu şüpheli bulup reddedebiliyor. Bu adımda hiçbir ek ağ isteği
+        yapılmıyor, sadece Excel'deki veriyi daha akıllıca kullanıyoruz.
+     2) **Amazon mağaza sayfası (Storefront Url) taraması**: sistem bu linki bir kez taramayı
+        dener; başarılı olursa marka açıklamasını da AI'a bağlam olarak verir, ve eğer sayfada
+        (nadiren de olsa) markanın kendi web sitesine bir dış link bulursa, önce onu doğrulayıp
+        (körü körüne güvenmeden, aynı merkezi kontrolden geçirerek) geçerse DİREKT kullanır —
+        bu durumda internet araması tamamen atlanır, hem daha hızlı hem daha isabetli olur.
+        **Dürüst bir uyarı**: Amazon Store sayfaları politika gereği genelde dışarıya link
+        vermeye izin vermez, bu yüzden bir dış link bulma ihtimali düşüktür — bu özellik
+        bulunduğunda bonus bir kazanç sağlar, bulunmadığında (çoğu durumda) sistem sessizce
+        normal arama akışına devam eder. Ayrıca Amazon, veri merkezi IP'lerinden (Render
+        dahil) gelen istekleri sık sık engeller/CAPTCHA gösterir — bu da taramanın bazen hiç
+        sonuç vermemesinin normal bir sebebidir, hata değildir.
    - **Marka adının "genel" bir kelimeye dayandığı durumlarda yanlış eşleşme riski azaltıldı.**
      "Shop", "Home", "Life", "Care", "Plus" gibi çok yaygın kelimeler tek başına artık güvenilir
      bir eşleşme sinyali sayılmıyor (ör. "Modern Life" markası için "modernguitars.com" gibi
@@ -341,6 +360,130 @@ değiştirebilirsin. "Tüm markalar için email ara" ve gönderim de artık tek 
 yüklemeyle sınırlı değil, sistemdeki tüm uygun markaları (bekleyen/bulunamamış)
 kapsar.
 
+## Aynı e-postaya farklı marka adıyla tekrar mail koruması (v34)
+
+Bazı distribütörlerin/şirketlerin birden fazla alt markası hep aynı `info@` adresine
+düşer. Sistem artık bunu otomatik tespit ediyor: bir marka için bulunan e-posta zaten
+başka bir markaya ait/gönderilmiş görünüyorsa (ya da beklemede) o kayıt otomatik olarak
+**"Tekrar (Engellendi)"** durumuna alınır — aynı kutuya farklı marka adıyla iki ayrı iş
+teklifi maili gitmez. Panelde ayrı bir filtre sekmesinden bu markaları görebilirsin;
+gerçekten farklı bir e-posta bulmak istersen "Ara" ile tekrar arattırabilirsin.
+
+## Kalıcı "Bir Daha Yazma" Listesi (v34)
+
+Bir marka yanıtında açıkça "unsubscribe", "remove me", "bir daha yazma" gibi net bir
+çıkış talebinde bulunursa (yanıt kontrolü sırasında hem anahtar kelime hem de, tanımlıysa,
+yapay zeka ile tespit edilir), o e-posta adresi **kalıcı** bir "bir daha yazma" listesine
+eklenir. Bu liste marka bazlı değil **e-posta bazlıdır**: marka kaydı silinse, Excel'den
+yeniden yüklense, farklı bir marka adıyla aynı adres tekrar karşına çıksa bile sistem o
+adrese bir daha ASLA mail göndermez (tekli gönderim, toplu gönderim, otomatik günlük
+gönderim ve otomatik follow-up'ların hepsinde kontrol edilir). Panel ana sayfasında
+("Bilgilerin" kartının altında) bu listeyi görebilir, elle adres ekleyip çıkarabilirsin.
+Ayrıca her mailde giden **List-Unsubscribe** başlığı sayesinde alıcı mail istemcisindeki
+tek tık "abonelikten çık" seçeneğini kullanırsa bu da otomatik olarak listeye eklenir.
+
+## Bounce Oranı Güvenlik Freni (v34)
+
+Son 24 saatte gönderilen maillerin çok yüksek bir oranı (varsayılan eşik: en az 5
+gönderim örnekleminde %30 ve üzeri) geri dönerse (bounce), sistem **otomatik günlük
+gönderimi kendiliğinden durdurur** — kötü/eski bir e-posta listesiyle göndericinin
+itibarının (sender reputation) daha da zedelenmesini önlemek için. Bu tetiklendiğinde
+sana bir bildirim maili gider ve panelde kırmızı bir uyarı banner'ı görünür. Sorunu
+inceledikten sonra ("Ulaşmayanlar" listesine bakıp muhtemelen bozuk adresleri
+temizledikten sonra) banner'daki "Sorunu inceledim, devam et" butonuyla elle
+sıfırlayabilirsin — freni otomatik olarak biz açmıyoruz, çünkü asıl sorunu çözmeden
+tekrar göndermeye devam etmek aynı hataya düşmek olur.
+
+## Haftalık Özet Maili (v34)
+
+Her Pazartesi (UTC 08:05) son 7 günün özeti otomatik olarak sana mail atılır: kaç mail
+gönderildi, kaç yanıt geldi (kaçı olumlu), kaç mail geri döndü, kaç marka belge istedi,
+kaç yeni adres "bir daha yazma" listesine eklendi, ve bu haftaki olumlu yanıtların kısa
+bir listesi. Test etmek ya da hemen bir özet almak istersen "Gönderim Takibi" sayfasındaki
+**"📊 Haftalık Özeti Şimdi Gönder"** butonunu kullanabilirsin (aynı hafta içinde ikinci
+bir tane gitmesin diye otomatik olarak korunur).
+
+## CAN-SPAM Fiziksel Adres (v34)
+
+ABD'ye ticari mail gönderirken geçerli olan CAN-SPAM Act, gönderenin gerçek bir fiziksel
+posta adresini içermesini zorunlu kılıyor. "Bilgilerin" kartına şirket adresini bir kez
+girdiğinde, bu adres her mailin altına (hem HTML hem düz metin sürümüne) otomatik olarak
+küçük bir footer olarak ekleniyor — hem yasal gereklilik hem de spam filtrelerinin
+"gerçek bir şirket" sinyali olarak baktığı bir unsur.
+
+## LinkedIn Doğrulama Sinyali (v34)
+
+Yapay zeka doğrulaması (ANTHROPIC_API_KEY tanımlıysa) artık ek bir ipucu olarak markanın
+LinkedIn şirket sayfasını da arıyor. LinkedIn'in kendisi oturum açmamış isteklere neredeyse
+her zaman bir "giriş yap" duvarı gösterdiği için sayfayı doğrudan açıp okumuyoruz —
+bunun yerine arama motorunun zaten indekslediği başlık/özet metnini kullanıyoruz, bu da
+LinkedIn'e hiç istek atmadan çalışabiliyor. Bulunursa bu bilgi, doğru siteyi/markayı
+seçerken AI'ya ek bir bağlam olarak veriliyor; bulunamazsa (LinkedIn araması çoğu zaman
+sonuçsuz kalabilir) hiçbir şeyi etkilemeden sessizce atlanır.
+
+## Marka Notları (v34)
+
+Her markanın e-mail alanının hemen altında küçük bir "Not ekle" kutusu var — "tekrar ara",
+"fiyat teklifi bekliyor", "telefonla arandı" gibi kişisel hatırlatmalar için kullanabilirsin.
+Yazdığın not otomatik kaydedilir ve Excel'e aktarımda da bir sütun olarak çıkar.
+
+## Değer Bazlı Gönderim Sırası (v35)
+
+Hem otomatik günlük gönderim hem de "Bulunan tüm e-maillere gönder" / "Seçilenleri
+Gönder" artık markaları rastgele/ID sırasıyla değil, Excel'den gelen **Brand Score**
+ve **Est. Monthly Revenue** değerlerine göre en değerliden başlayarak gönderiyor —
+en iyi fırsatlara ilk elden ulaşmış olursun. Bu veriler yoksa (sade bir marka listesi
+yüklediysen) sıralama hiçbir şeyi değiştirmez.
+
+## Telefon Numarası (v35)
+
+Hunter.io bazen bir e-mail kaydına eşlik eden bir telefon numarası da döndürüyor
+(nadiren dolu oluyor). Bulunursa marka satırında e-mail alanının altında küçük bir
+📞 etiketiyle görünür ve Excel'e aktarımda da bir sütun olarak çıkar — doğrudan
+aramak için ekstra bir kanal.
+
+## Ülke Bazlı Gönderim Saati (v35)
+
+Excel'de bir "Country" sütunu varsa, otomatik günlük gönderim artık markanın kendi
+ülkesindeki yaklaşık iş saatlerini (09:00-18:00 yerel saat) gözetiyor — en değerli
+aday şu an markanın ülkesinde gece yarısıysa, sırayla bir sonraki en değerli, o an
+iş saatlerinde olan adaya geçiyor. Ülke bilinmiyorsa/desteklenmiyorsa (yaklaşık 40
+yaygın ülke için bir eşleme var) gönderim engellenmez, eskisi gibi UTC 08:00-20:00
+penceresinde devam eder.
+
+## Domain Yaşı (WHOIS) Sinyali (v35)
+
+Yapay zeka doğrulaması artık (ANTHROPIC_API_KEY tanımlıysa) adayın WHOIS kaydına da
+bakıyor — herhangi bir yeni paket kurulmadan, Node'un yerleşik ağ modülüyle en yaygın
+uzantılar (.com, .net, .org, .io, .co, .info, .biz, .us, .shop, .store) için doğrudan
+sorgu atılıyor. Domain çok yeni kaydedilmişse (180 günden az) bu, AI'ya "dikkatli ol,
+bu köklü bir marka sitesi olmayabilir" diye ek bir uyarı sinyali olarak veriliyor;
+uzun süredir kayıtlıysa bu olumlu bir sinyal sayılıyor. WHOIS sunucuları bazı bulut
+IP'lerini kısıtlayabildiği için bu tamamen best-effort — sorgu başarısız olursa (ya da
+desteklenmeyen bir uzantıysa) sessizce atlanır, hiçbir şeyi bozmaz.
+
+## Otomatik Haftalık Yedekleme (v35)
+
+Her Pazartesi (UTC 08:10, haftalık özet mailinden hemen sonra) veritabanının kendisi
+(`data/app.sqlite`) sana mail eki olarak gönderiliyor — Render'da disk sorunu çıkması
+ya da yanlışlıkla bir şeyin silinmesi ihtimaline karşı basit ama etkili bir sigorta.
+Bir sorun çıkarsa bu eki indirip `data/` klasörüne `app.sqlite` adıyla koyman yeterli.
+Panelde "Bilgilerin" kartındaki **"💾 Şimdi Yedekle"** butonuyla istediğin an elle de
+tetikleyebilirsin.
+
+## Soğuk Marka Yeniden Isıtma (v35, opsiyonel/varsayılan kapalı)
+
+Bazen bir marka hiç yanıt vermez ya da "şu an ilgilenmiyoruz" der, ama zaman içinde
+koşullar değişebilir. "Bilgilerin" kartındaki ilgili kutucuğu işaretlersen: 3 aşamalı
+takibi tamamlayıp hiç yanıt vermeyen markalara 120 gün sonra, olumsuz yanıt verenlere
+ise 180 gün sonra (daha temkinli bir süre) otomatik olarak bir şans daha veriliyor —
+marka tekrar gönderim kuyruğuna alınıyor, notlar alanına ne zaman/neden yeniden
+ısıtıldığı otomatik not düşülüyor. Her markaya en fazla 2 kez uygulanıyor (sonsuz
+döngü olmasın diye) ve kalıcı "bir daha yazma" listesindeki adresler bu özellikten
+her koşulda muaf. Bu özellik varsayılan **kapalı** — bilinçli bir tercih, çünkü bazı
+kullanıcılar için "hayır" diyen birine tekrar yazmak agresif görünebilir; sen açmayı
+seçersen devreye girer.
+
 ## Özet / Analitik
 
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim
@@ -354,8 +497,17 @@ Kod tarafında eklenenler:
   mail istemcisindeki "abonelikten çık" seçeneğini kullanırsa, gönderici itibarın
   (sender reputation) korunur.
 - **Reply-To** başlığı doğru ayarlanıyor, yanıtlar garanti şekilde sana geliyor.
-- Şablon kaydederken **spam tetikleyici kelime kontrolü** yapılıyor ("free", "ücretsiz",
-  "act now", çok fazla ünlem işareti gibi kalıpları tespit edip uyarıyor).
+- **Spam tetikleyici kelime kontrolü genişletildi ve iki noktada çalışıyor**: hem şablonu
+  kaydederken hem de **gerçekten göndermeye basarken** (böylece şablonu kaydettikten sonra
+  elle değiştirip tekrar kaydetmeden gönderirsen de uyarı alırsın). Artık "free"/"ücretsiz"/
+  "act now" gibi kelimelerin yanı sıra tek maildeki **link sayısını** (4+ link şüpheli
+  sayılır) ve **link kısaltıcı** (bit.ly, tinyurl.com vb. — spam filtreleri bunlara özellikle
+  dikkat eder) kullanımını da kontrol ediyor.
+- **Gönderim ritmi artık rastgele (insan eliyle gönderiliyormuş gibi)**: hem toplu gönderimde
+  ("Seçilenleri Gönder" / "Bulunan tüm e-maillere gönder") hem de otomatik takip
+  maillerinde, art arda sabit/düzenli aralıklarla göndermek yerine mailler arasında
+  rastgele 2-5 saniyelik bir bekleme uygulanıyor — tamamen düzenli aralıklarla giden
+  mailler otomasyon gibi göründüğü için bazı spam filtrelerinde şüphe uyandırabiliyordu.
 
 Ama en etkili adım kod dışında, **domain doğrulama** (SPF/DKIM/DMARC) kurmak — bunlar
 olmadan Gmail dahil çoğu servis mailini şüpheli görebilir:
@@ -479,10 +631,13 @@ brand-outreach-single-user/
     db.js                 # SQLite şeması (settings, brands, send_log)
     routes/settings.js     # Profil/imza ayarları
     routes/brands.js       # Excel yükleme, e-mail bulma, gönderim
-    routes/tracking.js     # Yanıt kontrolü + otomatik follow-up
-    services/mailer.js     # Gmail App Password ile mail gönderme (nodemailer)
-    services/emailFinder.js # Marka -> e-mail bulma mantığı
+    routes/tracking.js     # Yanıt kontrolü + otomatik follow-up + haftalık özet + güvenlik freni
+    routes/suppression.js  # Kalıcı "bir daha yazma" listesi API'si
+    services/mailer.js     # Gmail App Password ile mail gönderme (nodemailer) + CAN-SPAM footer + ek dosya desteği
+    services/emailFinder.js # Marka -> e-mail bulma mantığı (Amazon storefront + LinkedIn + WHOIS sinyalleri dahil)
     services/inboxChecker.js # Gmail IMAP ile yanıt kontrolü + basit sentiment tahmini
+    services/suppression.js  # Kalıcı "bir daha yazma" listesi mantığı
+    services/backup.js       # Haftalık veritabanı yedeği mail eki olarak gönderme
   public/                 # Panel (index.html) + Gönderim Takibi (tracking.html)
   sample_brands.csv       # Test için örnek marka listesi
   .env.example

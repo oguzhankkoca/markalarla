@@ -101,6 +101,42 @@ const DOCUMENT_KEYWORDS = [
   "faaliyet belge",
 ];
 
+// Alıcı net bir şekilde "bir daha yazma" dediğinde (klasik "not interested"ten
+// FARKLI olarak — biri "ilgilenmiyoruz" der ama "unsubscribe" demez, o markayı
+// bir daha aramaya/iletişime geçmeye açık olabilir). Sadece burada geçen açık
+// bir çıkış talebi kalıcı "bir daha yazma" listesine (suppression_list) ekler.
+// Mail istemcisindeki tek tık "List-Unsubscribe" linkine tıklanınca gönderilen
+// otomatik cevabın konusu "unsubscribe" olur (bkz. mailer.js) — bu da burada
+// yakalanır.
+const UNSUBSCRIBE_KEYWORDS = [
+  "unsubscribe",
+  "remove me",
+  "remove us",
+  "please remove",
+  "take me off",
+  "take us off",
+  "stop contacting",
+  "stop emailing",
+  "do not contact",
+  "don't contact",
+  "opt out",
+  "opt-out",
+  "listeden çıkar",
+  "listeden çıkarın",
+  "listeden çık",
+  "bir daha yazma",
+  "bir daha mail atma",
+  "bir daha e-posta atma",
+  "kaydımı sil",
+  "iletişim listesinden çıkar",
+  "abonelikten çık",
+];
+
+function guessUnsubscribeIntent(subject, text) {
+  const lower = `${subject || ""} ${text || ""}`.toLowerCase();
+  return UNSUBSCRIBE_KEYWORDS.some((k) => lower.includes(k));
+}
+
 // Teslim edilemeyen (bounce/NDR) bildirimlerinde sıkça geçen ifadeler. Yapay
 // zeka tanımlıysa AI bu mesajları zaten "bounce" olarak sınıflandırabilir; bu
 // liste hem AI olmadan çalışan yedek katman hem de checkBounces() için ek bir
@@ -192,11 +228,12 @@ async function classifyReplyWithAI(subject, text) {
   if (!ai.isConfigured()) return null;
   const prompt = `Aşağıda bir marka outreach (iş birliği teklifi) mailine gelen bir yanıtın konu başlığı ve içeriği var. Bu yanıtı analiz et ve SADECE aşağıdaki JSON formatında cevap ver, başka hiçbir açıklama ya da metin ekleme:
 
-{"type": "positive" | "negative" | "neutral" | "bounce" | "auto_reply", "documentRequested": true, "reason": "kısa açıklama (Türkçe, tek cümle)"}
+{"type": "positive" | "negative" | "neutral" | "bounce" | "auto_reply", "documentRequested": true, "unsubscribeRequested": true, "reason": "kısa açıklama (Türkçe, tek cümle)"}
 
 Alan açıklamaları:
 - "type": Yanıt olumlu mu ("interested", görüşme/numune istiyorlar), olumsuz mu (ilgilenmiyorlar, reddediyorlar), belirsiz mi ("neutral" - net değil, daha fazla bilgi istiyorlar ama ret/kabul değil), bir teslim edilememe/bounce bildirimi mi ("bounce" - otomatik sistem mesajı, "delivery failed", "mailbox not found" gibi, GERÇEK bir insan yanıtı DEĞİL), yoksa bir ofis-dışı/otomatik yanıt mı ("auto_reply" - "out of office", "on vacation", otomatik okundu bilgisi gibi, insan tarafından henüz okunmamış)?
 - "documentRequested": Yanıt, göndericiden ilerlemeden önce bir belge/evrak istiyor mu? (örn. iş lisansı, yeniden satış sertifikası (resale/reseller certificate), vergi kimlik no (EIN/Tax ID), W9 formu, distribütörlük/bayilik başvuru formu, ticaret sicil belgesi, kuruluş belgesi, kredi başvurusu vb. resmi bir belge/form talebi varsa true, yoksa false.
+- "unsubscribeRequested": Yanıt AÇIKÇA bir daha mail/iletişim istemediğini belirtiyor mu (ör. "unsubscribe", "remove me from your list", "bir daha yazmayın", "listeden çıkarın")? Sadece "ilgilenmiyoruz" demek bu değildir — kalıcı olarak bir daha ASLA iletişime geçilmemesini istemek gerekir. Emin değilsen false döndür.
 
 Konu: ${subject || "(yok)"}
 
@@ -210,6 +247,7 @@ ${(text || "").slice(0, 3000)}`;
   return {
     type: parsed.type,
     documentRequested: Boolean(parsed.documentRequested),
+    unsubscribeRequested: Boolean(parsed.unsubscribeRequested),
     reason: parsed.reason || "",
   };
 }
@@ -296,6 +334,7 @@ async function checkRepliesForMany(brandList) {
           let sentiment = guessSentiment(text || subject);
           let documentRequested = guessDocumentRequested(text || subject);
           let isBounceLike = guessBounceLike(text || subject);
+          let unsubscribeRequested = guessUnsubscribeIntent(subject, text);
           let aiReason = "";
 
           // 2) Yapay zeka tanımlıysa, daha güvenilir bir sınıflandırma ile üzerine yaz.
@@ -305,6 +344,7 @@ async function checkRepliesForMany(brandList) {
           if (aiResult) {
             aiReason = aiResult.reason;
             documentRequested = aiResult.documentRequested || documentRequested;
+            unsubscribeRequested = aiResult.unsubscribeRequested || unsubscribeRequested;
             if (aiResult.type === "bounce") {
               isBounceLike = true;
             } else if (aiResult.type === "auto_reply") {
@@ -321,6 +361,7 @@ async function checkRepliesForMany(brandList) {
             from: parsed.from ? parsed.from.text : brand.email,
             documentRequested,
             isBounceLike,
+            unsubscribeRequested,
             aiReason,
             matchType,
           });
@@ -458,5 +499,6 @@ module.exports = {
   guessSentiment,
   guessDocumentRequested,
   guessBounceLike,
+  guessUnsubscribeIntent,
   classifyReplyWithAI,
 };

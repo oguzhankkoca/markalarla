@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const db = require("../db");
 
 function isConfigured() {
   return Boolean(process.env.EMAIL_USER && process.env.EMAIL_APP_PASSWORD);
@@ -71,12 +72,38 @@ async function trySend(port, secure, mailOptions) {
   return transporter.sendMail(mailOptions);
 }
 
-async function sendMail({ to, subject, body }) {
+// CAN-SPAM Act (ABD'ye ticari mail gönderirken geçerli olan yasa) gönderenin gerçek
+// bir fiziksel posta adresini içermesini ZORUNLU kılıyor. Ayarlar'da bir adres
+// girildiyse her mailin altına otomatik ekleniyor — hem yasal gereklilik hem de
+// spam filtrelerinin "gerçek bir şirket" sinyali olarak baktığı bir unsur. Kullanıcı
+// şablonuna elle eklemesine gerek kalmasın diye burada, gönderim anında ekleniyor.
+function getCompanyAddress() {
+  try {
+    const settings = db.prepare("SELECT company_address FROM settings WHERE id = 1").get();
+    return settings && settings.company_address ? settings.company_address.trim() : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function appendAddressFooter(htmlBody, textBody, address) {
+  if (!address) return { htmlBody, textBody };
+  const htmlFooter = `<div style="margin-top:24px;padding-top:12px;border-top:1px solid #ddd;font-size:11px;color:#888;">${escapeHtml(
+    address
+  )}</div>`;
+  const textFooter = `\n\n---\n${address}`;
+  return { htmlBody: htmlBody + htmlFooter, textBody: textBody + textFooter };
+}
+
+async function sendMail({ to, subject, body, attachments }) {
   assertConfigured();
   const fromName = process.env.EMAIL_FROM_NAME || process.env.EMAIL_USER;
   const isHtml = looksLikeHtml(body);
-  const htmlBody = isHtml ? body : plainTextToHtml(body);
-  const textBody = isHtml ? htmlToPlainText(body) : body;
+  let htmlBody = isHtml ? body : plainTextToHtml(body);
+  let textBody = isHtml ? htmlToPlainText(body) : body;
+
+  const companyAddress = getCompanyAddress();
+  ({ htmlBody, textBody } = appendAddressFooter(htmlBody, textBody, companyAddress));
 
   const mailOptions = {
     from: `"${fromName}" <${process.env.EMAIL_USER}>`,
@@ -95,6 +122,13 @@ async function sendMail({ to, subject, body }) {
     },
     replyTo: process.env.EMAIL_USER,
   };
+
+  // Haftalık veritabanı yedeği gibi dosya ekleri gönderilmek istendiğinde
+  // (bkz. services/backup.js) — nodemailer'ın doğal attachments formatını
+  // olduğu gibi geçiriyoruz: [{ filename, content: Buffer }] ya da [{ filename, path }].
+  if (attachments && attachments.length > 0) {
+    mailOptions.attachments = attachments;
+  }
 
   try {
     return await trySend(587, false, mailOptions);

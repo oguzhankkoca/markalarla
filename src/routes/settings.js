@@ -1,6 +1,7 @@
 const express = require("express");
 const db = require("../db");
 const mailer = require("../services/mailer");
+const { sendBackupEmail } = require("../services/backup");
 
 const router = express.Router();
 
@@ -21,7 +22,8 @@ router.post("/api/settings", (req, res) => {
   const merged = { ...current, ...req.body };
   db.prepare(
     `UPDATE settings SET name = ?, company = ?, offer_text = ?, signature = ?,
-      main_subject = ?, main_body = ?, daily_send_limit = ?
+      main_subject = ?, main_body = ?, daily_send_limit = ?, company_address = ?,
+      rewarm_enabled = ?
      WHERE id = 1`
   ).run(
     merged.name || "",
@@ -30,9 +32,22 @@ router.post("/api/settings", (req, res) => {
     merged.signature || "",
     merged.main_subject || "",
     merged.main_body || "",
-    Number(merged.daily_send_limit) || 0
+    Number(merged.daily_send_limit) || 0,
+    merged.company_address || "",
+    merged.rewarm_enabled ? 1 : 0
   );
   res.json({ ok: true });
+});
+
+// Veritabanının bir kopyasını hemen mail eki olarak gönder (test etmek ya da
+// hemen bir yedek almak için) — normalde her Pazartesi otomatik gider.
+router.post("/api/settings/backup/send-now", async (req, res) => {
+  try {
+    const result = await sendBackupEmail();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: "Yedek gönderilemedi: " + err.message });
+  }
 });
 
 module.exports = router;

@@ -8,6 +8,7 @@ const brandRoutes = require("./routes/brands");
 const trackingRoutes = require("./routes/tracking");
 const analyticsRoutes = require("./routes/analytics");
 const creditsRoutes = require("./routes/credits");
+const suppressionRoutes = require("./routes/suppression");
 const mailer = require("./services/mailer");
 
 const app = express();
@@ -19,6 +20,7 @@ app.use(brandRoutes);
 app.use(trackingRoutes);
 app.use(analyticsRoutes);
 app.use(creditsRoutes);
+app.use(suppressionRoutes);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.listen(PORT, () => {
@@ -39,14 +41,49 @@ app.listen(PORT, () => {
     cron.schedule("0 8 * * *", async () => {
       console.log("[cron] Günlük yanıt/bounce/follow-up kontrolü başladı...");
       try {
-        const { runFullCheck } = require("./routes/tracking");
+        const { runFullCheck, reWarmColdBrands } = require("./routes/tracking");
         const summary = await runFullCheck();
         console.log("[cron] Tamamlandı:", JSON.stringify(summary));
+        // Soğuk marka yeniden ısıtma varsayılan KAPALI (settings.rewarm_enabled) —
+        // fonksiyon zaten kapalıysa hiçbir şey yapmadan döner, burada her zaman çağırmak güvenli.
+        const rewarmResult = reWarmColdBrands();
+        if (rewarmResult.rewarmed > 0) {
+          console.log("[cron] Yeniden ısıtılan markalar:", JSON.stringify(rewarmResult));
+        }
       } catch (e) {
         console.error("[cron] Hata:", e.message);
       }
     });
     console.log("Günlük otomatik kontrol zamanlayıcısı kuruldu (her gün UTC 08:00).");
+
+    // Her Pazartesi günlük kontrolden kısa bir süre sonra (08:05 UTC), son 7 günün
+    // özetini (kaç mail gitti, kaç yanıt/bounce/olumlu geldi) tek bir mailde gönderir.
+    cron.schedule("5 8 * * 1", async () => {
+      console.log("[cron] Haftalık özet maili gönderiliyor...");
+      try {
+        const { sendWeeklySummary } = require("./routes/tracking");
+        const result = await sendWeeklySummary();
+        console.log("[cron] Haftalık özet:", JSON.stringify(result));
+      } catch (e) {
+        console.error("[cron] Haftalık özet hatası:", e.message);
+      }
+    });
+    console.log("Haftalık özet maili zamanlayıcısı kuruldu (her Pazartesi UTC 08:05).");
+
+    // Haftalık özet mailinden hemen sonra (08:10 UTC), veritabanının kendisini
+    // (data/app.sqlite) mail eki olarak gönderir — Render disk sorununa karşı
+    // basit bir yedekleme sigortası.
+    cron.schedule("10 8 * * 1", async () => {
+      console.log("[cron] Haftalık veritabanı yedeği gönderiliyor...");
+      try {
+        const { sendBackupEmail } = require("./services/backup");
+        const result = await sendBackupEmail();
+        console.log("[cron] Yedek sonucu:", JSON.stringify(result));
+      } catch (e) {
+        console.error("[cron] Yedek hatası:", e.message);
+      }
+    });
+    console.log("Haftalık veritabanı yedeği zamanlayıcısı kuruldu (her Pazartesi UTC 08:10).");
 
     // Günlük gönderim limiti (Ayarlar'daki "daily_send_limit") ayarlanmışsa, mailleri
     // tek seferde patlatmak yerine güne yaymak için 08:00-20:00 UTC arası her 10

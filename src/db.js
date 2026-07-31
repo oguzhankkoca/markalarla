@@ -11,7 +11,8 @@ const Database = require("better-sqlite3");
 const dataDir = process.env.DATA_DIR || path.join(__dirname, "..", "data");
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, "app.sqlite"));
+const dbFilePath = path.join(dataDir, "app.sqlite");
+const db = new Database(dbFilePath);
 db.pragma("journal_mode = WAL");
 
 db.exec(`
@@ -42,6 +43,17 @@ CREATE TABLE IF NOT EXISTS send_log (
   brand_id INTEGER NOT NULL,
   status TEXT NOT NULL,
   message TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bir e-posta adresi buraya girdiyse sistem BİR DAHA ASLA o adrese mail göndermez —
+-- marka kaydı silinse, yeniden yüklense ya da tekilleştirilse bile bu liste kalıcıdır.
+-- "unsubscribe"/"remove me" gibi net bir çıkış talebi tespit edildiğinde otomatik
+-- eklenir; kullanıcı da elle bir adres ekleyebilir/çıkarabilir.
+CREATE TABLE IF NOT EXISTS suppression_list (
+  email TEXT PRIMARY KEY,
+  reason TEXT,
+  brand_name TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 `);
@@ -121,10 +133,91 @@ ensureColumn("brands", "sent_via", "TEXT DEFAULT 'email'");
 ensureColumn("brands", "document_requested", "INTEGER DEFAULT 0");
 ensureColumn("brands", "document_request_snippet", "TEXT");
 
+// Serbest not alanı — "tekrar ara", "fiyat teklifi bekliyor" gibi kişisel hatırlatmalar için.
+ensureColumn("brands", "notes", "TEXT");
+
+// Bir marka, aynı e-posta adresini kullanan BAŞKA bir marka kaydı yüzünden (ör. aynı
+// şirketin birden fazla ürün hattı/alt markası, hepsi aynı info@ adresine düşüyor)
+// gönderimden hariç tutulduysa bunu ayırt etmek için.
+ensureColumn("brands", "cross_brand_duplicate_email", "INTEGER DEFAULT 0");
+
+// Kalıcı "bir daha yazma" listesine (suppression_list) düşmüş bir adrese ait marka
+// hızlıca filtrelenebilsin diye denormalize bir bayrak.
+ensureColumn("brands", "suppressed", "INTEGER DEFAULT 0");
+
+// CAN-SPAM Act (ABD'ye ticari mail atarken) gönderenin gerçek bir fiziksel posta
+// adresini içermesini zorunlu kılıyor — hem yasal gereklilik hem de spam filtrelerinin
+// "gerçek bir şirket" sinyali olarak baktığı bir unsur. Doluysa her mailin altına
+// otomatik ekleniyor (bkz. mailer.js).
+ensureColumn("settings", "company_address", "TEXT");
+
+// Bounce oranı güvenlik freni: son 24 saatte gönderilenlerin bounce oranı eşiği
+// geçerse otomatik gönderim durur. Bu iki alan, kullanıcıya sadece BİR KEZ uyarı
+// maili gitmesini (her 10 dakikada bir spam gibi tekrar tekrar değil) ve panelde
+// durumun görünür kalmasını sağlar.
+ensureColumn("settings", "circuit_breaker_active", "INTEGER DEFAULT 0");
+ensureColumn("settings", "circuit_breaker_notified_at", "TEXT");
+
+// Hunter.io bazen bir e-mail kaydına eşlik eden telefon numarası da döndürüyor
+// (nadiren dolu oluyor) — doluysa markayı doğrudan aramak için ekstra bir kanal.
+ensureColumn("brands", "phone", "TEXT");
+
+// Excel'deki "Country" sütunu — hem bilgi amaçlı hem de ülke bazlı gönderim
+// saatine göre otomatik gönderimi zamanlamak için kullanılır.
+ensureColumn("brands", "country", "TEXT");
+
+// Haftalık özet mailinin en son ne zaman gönderildiğini tutar — cron her hafta
+// pazartesi tetiklense bile, sunucu o dakikada yeniden başlarsa (Render gibi
+// platformlarda olabilir) aynı haftada ikinci bir özet gitmesini önler.
+ensureColumn("settings", "last_weekly_summary_at", "TEXT");
+
+// Haftalık otomatik veritabanı yedeklemesinin en son ne zaman gönderildiğini tutar
+// (aynı hafta içinde iki kez gitmesin diye, haftalık özet mailiyle aynı mantık).
+ensureColumn("settings", "last_backup_at", "TEXT");
+
+// Soğuk marka yeniden ısıtma: uzun süre sessiz kalan ya da olumsuz yanıt veren
+// markaları otomatik olarak tekrar gönderim kuyruğuna alma özelliği. Bazı
+// kullanıcılar "hayır" diyen birine tekrar yazmayı agresif bulabileceği için
+// varsayılan KAPALI — ayarlardan bilinçli olarak açılması gerekiyor.
+ensureColumn("settings", "rewarm_enabled", "INTEGER DEFAULT 0");
+// Bir marka en fazla kaç kez otomatik yeniden ısıtılabilir (sonsuz döngüyü önlemek için).
+ensureColumn("brands", "rewarm_count", "INTEGER DEFAULT 0");
+
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`
   UPDATE brands SET name_normalized = LOWER(TRIM(name))
   WHERE name_normalized IS NULL OR name_normalized = ''
 `);
 
+// Aynı e-posta adresine birden fazla marka kaydı düşmüş olabilir (ör. aynı
+// distribütörün/şirketin birden fazla alt markası hep aynı info@ adresine
+// yönleniyor). Bu durumda farklı marka adlarıyla aynı kutuya art arda mail
+// gitmesi hem tuhaf görünür hem de spam gibi algılanabilir. Her açılışta:
+// aynı e-postaya sahip kayıtlar arasında en eski (ID'si en küçük) kayıt
+// "sahip" kalır, henüz gönderilmemiş ('found') diğerleri duplicate_blocked
+// durumuna alınır. Zaten gönderilmiş kayıtlara dokunulmaz (geçmiş bozulmasın).
+try {
+  const dupEmailRows = db
+    .prepare(
+      `SELECT LOWER(TRIM(email)) as em FROM brands
+       WHERE email IS NOT NULL AND TRIM(email) != ''
+       GROUP BY LOWER(TRIM(email)) HAVING COUNT(*) > 1`
+    )
+    .all();
+  const markDuplicate = db.prepare(
+    "UPDATE brands SET status = 'duplicate_blocked', cross_brand_duplicate_email = 1 WHERE id = ?"
+  );
+  for (const row of dupEmailRows) {
+    const owners = db
+      .prepare("SELECT id, status FROM brands WHERE LOWER(TRIM(email)) = ? ORDER BY id ASC")
+      .all(row.em);
+    for (let i = 1; i < owners.length; i++) {
+      if (owners[i].status === "found") markDuplicate.run(owners[i].id);
+    }
+  }
+} catch (e) {
+  console.error("Cross-brand e-posta tekrarı taraması sırasında hata:", e.message);
+}
+
 module.exports = db;
+module.exports.dbFilePath = dbFilePath;

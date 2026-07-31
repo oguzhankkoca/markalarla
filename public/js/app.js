@@ -107,17 +107,21 @@ function matchesFilter(b, filter) {
   // olamadı — bunları göndermeden önce gözden geçirmen ya da "Ara" ile tekrar
   // arattırman için kolayca tek yerde toplayan sekme.
   if (filter === "low_confidence") return b.email && b.confidence === "low";
+  if (filter === "duplicate_blocked") return b.status === "duplicate_blocked";
+  if (filter === "suppressed") return Boolean(b.suppressed);
   return true;
 }
 
 function renderFilterTabs() {
-  const counts = { all: brands.length, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0 };
+  const counts = { all: brands.length, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0, duplicate_blocked: 0, suppressed: 0 };
   for (const b of brands) {
     if (b.status === "found") counts.found++;
     else if (b.status === "not_found" || b.status === "error") counts.not_found++;
     else if (b.status === "pending") counts.pending++;
+    else if (b.status === "duplicate_blocked") counts.duplicate_blocked++;
     if (hasContactFormOnly(b)) counts.contact_form++;
     if (b.email && b.confidence === "low") counts.low_confidence++;
+    if (b.suppressed) counts.suppressed++;
   }
   const setText = (id, n) => {
     const el = document.getElementById(id);
@@ -129,6 +133,8 @@ function renderFilterTabs() {
   setText("countPending", counts.pending);
   setText("countContactForm", counts.contact_form);
   setText("countLowConfidence", counts.low_confidence);
+  setText("countDuplicateBlocked", counts.duplicate_blocked);
+  setText("countSuppressed", counts.suppressed);
   document.querySelectorAll(".filter-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.filter === currentFilter);
   });
@@ -153,13 +159,16 @@ function renderBrands() {
       <td>
         <input data-field="email" data-id="${b.id}" value="${b.email || ""}" />
         ${b.email && b.confidence === "low" ? `<div class="confidence-warn">⚠️ düşük güven — bu site markaya ait olmayabilir, kontrol et</div>` : ""}
+        ${b.suppressed ? `<div class="confidence-warn">🚫 kalıcı "bir daha yazma" listesinde — gönderim engellendi</div>` : ""}
+        ${b.phone ? `<div class="muted" style="font-size:12px;">📞 ${b.phone}</div>` : ""}
         ${contactLine}
+        <input data-field="notes" data-id="${b.id}" value="${(b.notes || "").replace(/"/g, "&quot;")}" placeholder="Not ekle (ör. tekrar ara, fiyat bekliyor)" style="margin-top:4px; font-size:12px;" />
       </td>
       <td>${badge(b.status)}${sentViaTag}</td>
       <td>
         <div class="actions-cell">
           <button class="small find-btn" data-id="${b.id}" title="E-mail ara">Ara</button>
-          <button class="small send-btn" data-id="${b.id}" title="Mail gönder" ${!b.email || b.status === "duplicate_blocked" ? "disabled" : ""}>Gönder</button>
+          <button class="small send-btn" data-id="${b.id}" title="Mail gönder" ${!b.email || b.status === "duplicate_blocked" || b.suppressed ? "disabled" : ""}>Gönder</button>
           ${
             !b.email && b.contact_page_url
               ? `<button class="small secondary contact-btn" data-id="${b.id}" title="İletişim formunu aç">Form Aç</button>
@@ -201,7 +210,7 @@ function attachRowEvents() {
       await fetch(`/api/brands/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: brand.email, website: brand.website }),
+        body: JSON.stringify({ email: brand.email, website: brand.website, notes: brand.notes }),
       });
       renderBrands();
     });
@@ -358,6 +367,18 @@ async function loadSettings() {
   document.getElementById("settingsCompany").value = s.company || "";
   document.getElementById("settingsOffer").value = s.offer_text || "";
   document.getElementById("settingsSignature").value = s.signature || "";
+  document.getElementById("settingsCompanyAddress").value = s.company_address || "";
+
+  const breakerBanner = document.getElementById("circuitBreakerBanner");
+  if (breakerBanner) {
+    if (s.circuit_breaker_active) {
+      breakerBanner.style.display = "block";
+      document.getElementById("circuitBreakerText").textContent =
+        "⚠️ Güvenlik freni devreye girdi: son 24 saatte gönderilen maillerin çok yüksek bir oranı geri döndü, bu yüzden otomatik günlük gönderim durduruldu. \"Ulaşmayanlar\" listesini incele (Gönderim Takibi sayfası) — muhtemelen listede çok sayıda geçersiz e-posta var. Sorunu çözdükten sonra aşağıdan devam edebilirsin.";
+    } else {
+      breakerBanner.style.display = "none";
+    }
+  }
 
   if (data.emailConfigured) {
     emailStatusEl.innerHTML = `<span class="ok">Gönderim hesabı: ${data.emailAddress}</span>`;
@@ -376,6 +397,7 @@ async function loadSettings() {
     `Sayın {{marka}} Yetkilisi,<br><br>${s.company || "Şirketimiz"} olarak Amazon üzerinde ${s.offer_text || "iş birliği"} konusunda sizinle görüşmek isteriz.<br><br>${s.signature || ""}`;
 
   document.getElementById("dailyLimitInput").value = s.daily_send_limit || 0;
+  document.getElementById("rewarmEnabledCheckbox").checked = Boolean(s.rewarm_enabled);
 }
 
 async function loadBrands() {
@@ -392,6 +414,7 @@ document.getElementById("saveSettingsBtn").addEventListener("click", async () =>
     company: document.getElementById("settingsCompany").value,
     offer_text: document.getElementById("settingsOffer").value,
     signature: document.getElementById("settingsSignature").value,
+    company_address: document.getElementById("settingsCompanyAddress").value,
   };
   await fetch("/api/settings", {
     method: "POST",
@@ -509,8 +532,24 @@ const SPAM_TRIGGER_WORDS = [
   "kazandınız",
   "100% free",
   "no obligation",
+  "congratulations",
+  "tebrikler",
+  "cash bonus",
+  "nakit bonus",
+  "double your",
+  "miktarını ikiye",
+  "urgent",
+  "acil",
+  "money back",
+  "para iade",
 ];
 
+const URL_SHORTENERS = ["bit.ly", "tinyurl.com", "goo.gl", "t.co", "ow.ly", "is.gd", "buff.ly"];
+
+// Basit spam-tetikleyici kontrolü. Kesin bir spam filtresi değildir, sadece Gmail/
+// Outlook gibi filtrelerin sıkça tepki verdiği kalıpları (yasaklı kelimeler, aşırı
+// link/ünlem, tamamen büyük harf, link kısaltıcılar) göstererek göndermeden önce
+// gözden geçirmeni sağlar.
 function checkSpamTriggers(subject, body) {
   const text = `${subject} ${body}`.toLowerCase();
   const found = SPAM_TRIGGER_WORDS.filter((w) => text.includes(w));
@@ -518,6 +557,10 @@ function checkSpamTriggers(subject, body) {
   if (exclamations >= 3) found.push(`çok fazla ünlem işareti (${exclamations} adet)`);
   const capsWords = (subject.match(/\b[A-ZÇĞİÖŞÜ]{4,}\b/g) || []).length;
   if (capsWords >= 1) found.push("konu satırında tamamı büyük harf kelime");
+  const linkCount = (text.match(/https?:\/\//g) || []).length;
+  if (linkCount >= 4) found.push(`çok fazla link (${linkCount} adet) — soğuk mailde 1-2 link idealdir`);
+  const shortenerHit = URL_SHORTENERS.find((s) => text.includes(s));
+  if (shortenerHit) found.push(`link kısaltıcı kullanılmış (${shortenerHit}) — spam filtreleri bunlara şüpheyle bakar`);
   return found;
 }
 
@@ -537,6 +580,14 @@ document.getElementById("saveTemplateBtn").addEventListener("click", async () =>
   alert("Şablon kaydedildi.");
 });
 
+document.getElementById("rewarmEnabledCheckbox").addEventListener("change", async (e) => {
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rewarm_enabled: e.target.checked }),
+  });
+});
+
 document.getElementById("saveDailyLimitBtn").addEventListener("click", async () => {
   const value = Number(document.getElementById("dailyLimitInput").value) || 0;
   await fetch("/api/settings", {
@@ -551,8 +602,36 @@ document.getElementById("saveDailyLimitBtn").addEventListener("click", async () 
   );
 });
 
+// En değerli markalara (Brand Score / tahmini aylık ciro yüksek olanlara) önce
+// ulaşmak için: toplu gönderimde sıralama artık listeye eklenme sırası değil,
+// bu değer sırası. Veri yoksa (SmartScout tarzı Excel yüklenmediyse) sıralama
+// hiçbir şeyi değiştirmez, hepsi eşit sayılıp mevcut sıra korunur.
+function sortByValue(list) {
+  return [...list].sort((a, b) => {
+    const scoreA = a.brand_score ?? 0;
+    const scoreB = b.brand_score ?? 0;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    const revA = a.est_monthly_revenue ?? 0;
+    const revB = b.est_monthly_revenue ?? 0;
+    return revB - revA;
+  });
+}
+
 async function sendBatch(targets) {
   if (targets.length === 0) return alert("Gönderilecek e-mail yok.");
+
+  // Göndermeden hemen önce ŞU AN kullanılan şablonu tekrar kontrol et — kullanıcı
+  // şablonu kaydettikten sonra elle değiştirip tekrar kaydetmeden gönderebilir,
+  // bu yüzden sadece "Şablonu kaydet" anında değil, gönderim anında da uyarıyoruz.
+  const triggers = checkSpamTriggers(subjectInput.value, richTextToPlain(bodyInput.innerHTML));
+  if (triggers.length > 0) {
+    const proceed = confirm(
+      `Göndereceğin mail şablonunda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\n` +
+        `Bunlar ${targets.length} markaya gidecek maillerin spam'e düşme riskini artırabilir. Yine de göndermek istiyor musun?`
+    );
+    if (!proceed) return;
+  }
+
   if (!confirm(`${targets.length} markaya mail gönderilecek. Onaylıyor musun?`)) return;
   document.getElementById("sendStatus").textContent = `0/${targets.length}`;
   let done = 0;
@@ -560,21 +639,30 @@ async function sendBatch(targets) {
     await sendToBrand(b.id);
     done++;
     document.getElementById("sendStatus").textContent = `${done}/${targets.length}`;
-    await new Promise((r) => setTimeout(r, 1500));
+    // Her mail arasında SABİT bir süre beklemek yerine rastgele bir aralık (2-5 sn)
+    // kullanıyoruz — art arda tamamen düzenli aralıklarla giden mailler otomasyon
+    // gibi göründüğü için bazı spam filtrelerinde şüphe uyandırabilir; insan eliyle
+    // gönderiliyormuş gibi rastgele bir ritim, gönderici itibarını korumaya yardımcı olur.
+    const jitter = 2000 + Math.floor(Math.random() * 3000);
+    await new Promise((r) => setTimeout(r, jitter));
   }
   document.getElementById("sendStatus").textContent = "Tamamlandı.";
 }
 
 document.getElementById("sendAllBtn").addEventListener("click", () => {
-  const targets = brands.filter(
-    (b) =>
-      b.email &&
-      !["sent", "duplicate_blocked", "bounced"].includes(b.status) &&
-      b.confidence !== "low"
+  const targets = sortByValue(
+    brands.filter(
+      (b) =>
+        b.email &&
+        !b.suppressed &&
+        !["sent", "duplicate_blocked", "bounced"].includes(b.status) &&
+        b.confidence !== "low"
+    )
   );
   const skippedLowConfidence = brands.filter(
     (b) =>
       b.email &&
+      !b.suppressed &&
       !["sent", "duplicate_blocked", "bounced"].includes(b.status) &&
       b.confidence === "low"
   ).length;
@@ -594,11 +682,14 @@ document.getElementById("sendAllBtn").addEventListener("click", () => {
 // listenin tamamını tek seferde göndermek yerine, istediğin kadarını seçip
 // göndermek için.
 document.getElementById("sendSelectedBtn").addEventListener("click", () => {
-  const targets = brands.filter(
-    (b) =>
-      selectedIds.has(String(b.id)) &&
-      b.email &&
-      !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+  const targets = sortByValue(
+    brands.filter(
+      (b) =>
+        selectedIds.has(String(b.id)) &&
+        b.email &&
+        !b.suppressed &&
+        !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+    )
   );
   if (targets.length === 0) return alert("Önce tablodan en az bir marka seç (checkbox).");
   sendBatch(targets);
@@ -732,10 +823,91 @@ async function loadCredits() {
   }
 }
 
+// Kalıcı "bir daha yazma" listesi: elle ekleme/çıkarma + görüntüleme.
+async function loadSuppressionList() {
+  const container = document.getElementById("suppressionList");
+  if (!container) return;
+  try {
+    const res = await fetch("/api/suppression");
+    const data = await res.json();
+    const entries = data.entries || [];
+    if (entries.length === 0) {
+      container.innerHTML = `<span class="muted">Liste şu an boş.</span>`;
+      return;
+    }
+    container.innerHTML = entries
+      .map(
+        (e) => `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #eee;">
+        <div>
+          <div><strong>${e.email}</strong></div>
+          <div class="muted" style="font-size:12px;">${e.reason || ""}${e.brand_name ? ` (${e.brand_name})` : ""}</div>
+        </div>
+        <button class="small secondary remove-suppression-btn" data-email="${e.email}">Çıkar</button>
+      </div>`
+      )
+      .join("");
+    container.querySelectorAll(".remove-suppression-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm(`${btn.dataset.email} adresini listeden çıkarmak istediğine emin misin? Bu adrese tekrar mail gönderilebilir hale gelecek.`)) return;
+        await fetch(`/api/suppression/${encodeURIComponent(btn.dataset.email)}`, { method: "DELETE" });
+        loadSuppressionList();
+        loadBrands();
+      });
+    });
+  } catch (e) {
+    container.innerHTML = `<span class="warn">Liste alınamadı: ${e.message}</span>`;
+  }
+}
+
+document.getElementById("addSuppressionBtn")?.addEventListener("click", async () => {
+  const input = document.getElementById("suppressionEmailInput");
+  const email = (input.value || "").trim();
+  if (!email || !email.includes("@")) return alert("Geçerli bir e-posta adresi gir.");
+  await fetch("/api/suppression", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, reason: "Elle eklendi" }),
+  });
+  input.value = "";
+  loadSuppressionList();
+  loadBrands();
+});
+
+document.getElementById("backupNowBtn")?.addEventListener("click", async () => {
+  const statusEl = document.getElementById("backupStatus");
+  statusEl.textContent = "Yedek gönderiliyor...";
+  try {
+    const res = await fetch("/api/settings/backup/send-now", { method: "POST" });
+    const data = await res.json();
+    if (data.sent) {
+      statusEl.textContent = `✅ Yedek gönderildi (${Math.round(data.sizeBytes / 1024)} KB).`;
+    } else if (data.reason === "already_sent_this_week") {
+      statusEl.textContent = "Bu hafta zaten bir yedek gönderilmiş.";
+    } else {
+      statusEl.textContent = "Yedek gönderilemedi: " + (data.error || data.reason || "bilinmeyen hata");
+    }
+  } catch (e) {
+    statusEl.textContent = "Yedek gönderilemedi: " + e.message;
+  }
+});
+
+document.getElementById("circuitBreakerResetBtn")?.addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Bounce oranını inceledin ve gönderime devam etmek istediğine emin misin? Sorun devam ediyorsa (ör. kötü bir liste) freni tekrar tetikleyecektir."
+    )
+  )
+    return;
+  await fetch("/api/tracking/circuit-breaker/reset", { method: "POST" });
+  loadSettings();
+});
+
 wireRichTextToolbars();
 loadSettings();
 loadBrands();
 loadCredits();
+loadSuppressionList();
 
 // Sayfa yenilenirse (arama devam ederken ya da duraklatılmışken), butonların ve
 // durumun doğru görünmesi için mevcut arama durumunu kontrol et.

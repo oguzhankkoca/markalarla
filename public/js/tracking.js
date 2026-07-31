@@ -433,14 +433,22 @@ function richTextToPlain(html) {
 const SPAM_TRIGGER_WORDS = [
   "free", "ücretsiz", "act now", "hemen ara", "limited time", "sınırlı süre",
   "guarantee", "garanti", "click here", "buraya tıkla", "$$$", "risk free",
-  "winner", "kazandınız", "100% free", "no obligation",
+  "winner", "kazandınız", "100% free", "no obligation", "congratulations",
+  "tebrikler", "cash bonus", "nakit bonus", "urgent", "acil", "money back",
+  "para iade",
 ];
+
+const URL_SHORTENERS = ["bit.ly", "tinyurl.com", "goo.gl", "t.co", "ow.ly", "is.gd", "buff.ly"];
 
 function checkSpamTriggers(subject, body) {
   const text = `${subject} ${body}`.toLowerCase();
   const found = SPAM_TRIGGER_WORDS.filter((w) => text.includes(w));
   const exclamations = (text.match(/!/g) || []).length;
   if (exclamations >= 3) found.push(`çok fazla ünlem işareti (${exclamations} adet)`);
+  const linkCount = (text.match(/https?:\/\//g) || []).length;
+  if (linkCount >= 4) found.push(`çok fazla link (${linkCount} adet) — soğuk mailde 1-2 link idealdir`);
+  const shortenerHit = URL_SHORTENERS.find((s) => text.includes(s));
+  if (shortenerHit) found.push(`link kısaltıcı kullanılmış (${shortenerHit}) — spam filtreleri bunlara şüpheyle bakar`);
   return found;
 }
 
@@ -531,6 +539,24 @@ document.getElementById("imapTestBtn").addEventListener("click", async () => {
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = "/api/tracking/export";
+});
+
+document.getElementById("weeklySummaryBtn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("checkStatus");
+  statusEl.textContent = "Haftalık özet gönderiliyor...";
+  try {
+    const res = await fetch("/api/tracking/weekly-summary/send-now", { method: "POST" });
+    const data = await res.json();
+    if (data.sent) {
+      statusEl.textContent = `✅ Haftalık özet gönderildi (${data.sentThisWeek} mail, ${data.repliedThisWeek} yanıt, ${data.positiveThisWeek} olumlu).`;
+    } else if (data.reason === "already_sent_this_week") {
+      statusEl.textContent = "Bu hafta zaten bir özet gönderilmiş — spam gibi tekrar tekrar gitmesin diye engellendi.";
+    } else {
+      statusEl.textContent = "Haftalık özet gönderilemedi: " + (data.error || data.reason || "bilinmeyen hata");
+    }
+  } catch (e) {
+    statusEl.textContent = "Haftalık özet gönderilemedi: " + e.message;
+  }
 });
 
 wireRichTextToolbars();

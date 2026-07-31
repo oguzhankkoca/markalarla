@@ -5,6 +5,7 @@ const XLSX = require("xlsx");
 const db = require("../db");
 const { findBrandEmail } = require("../services/emailFinder");
 const mailer = require("../services/mailer");
+const { isSuppressed } = require("../services/suppression");
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -42,6 +43,7 @@ const ENRICHMENT_COLUMNS = [
   { key: "growth_12m", match: /12\s*month\s*growth/i, type: "number" },
   { key: "product_count", match: /product\s*count/i, type: "number" },
   { key: "storefront_url", match: /storefront\s*url/i, type: "text" },
+  { key: "country", match: /^country$/i, type: "text" },
 ];
 
 function parseEnrichmentNumber(raw) {
@@ -97,9 +99,9 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
          batch, name, name_normalized, website, email, email_source, confidence, status, last_error,
          brand_score, main_category, subcategory, est_monthly_revenue, est_monthly_sales, avg_price,
          avg_fba_sellers, avg_sellers, dominant_seller, sales_percentage, amazon_in_stock_rate,
-         avg_rating, total_reviews, growth_12m, product_count, storefront_url
+         avg_rating, total_reviews, growth_12m, product_count, storefront_url, country
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // Marka adı (normalize edilmiş) sistemde herhangi bir yüklemede/batch'te zaten
@@ -154,7 +156,7 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
           enrichment.avg_fba_sellers, enrichment.avg_sellers, enrichment.dominant_seller,
           enrichment.sales_percentage, enrichment.amazon_in_stock_rate, enrichment.avg_rating,
           enrichment.total_reviews, enrichment.growth_12m, enrichment.product_count,
-          enrichment.storefront_url
+          enrichment.storefront_url, enrichment.country
         );
       }
     });
@@ -247,28 +249,84 @@ router.post("/api/brands/dedupe", (req, res) => {
   }
 });
 
+// Aynı e-posta adresi başka bir markaya ait olarak zaten "sahiplenilmiş" mi?
+// (o marka zaten gönderilmiş, ya da gönderilmeyi bekliyor, ya da zaten bu yüzden
+// engellenmiş). Öyleyse bu markayı ayrı bir isimle aynı kutuya yazmak yerine
+// engelliyoruz — aynı distribütör/şirketin birden fazla alt markası genelde aynı
+// info@ adresine düşüyor ve farklı marka adıyla art arda mail gitmesi hem tuhaf
+// görünür hem de alıcı tarafında spam gibi algılanma riskini artırır.
+function findEmailOwner(email, excludeId) {
+  if (!email) return null;
+  return db
+    .prepare(
+      `SELECT id, name, status FROM brands
+       WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) AND id != ?
+         AND status IN ('sent', 'found', 'duplicate_blocked')
+       ORDER BY id ASC LIMIT 1`
+    )
+    .get(email, excludeId);
+}
+
+// find-email sonucundan DB'ye yazılacak status/flag'i belirler: normal akışta
+// result.email varsa 'found', yoksa 'not_found'; ama e-posta başka bir markaya
+// aitse 'duplicate_blocked' olur.
+function resolveStatusAndDuplicateFlag(email, brandId) {
+  if (!email) return { status: "not_found", crossBrandDuplicate: 0, note: null };
+  // Kalıcı "bir daha yazma" listesi her şeyin önünde gelir — bu e-posta daha önce
+  // (başka bir marka adıyla bile olsa) net bir çıkış talebiyle bu listeye girdiyse
+  // hiçbir koşulda gönderime açılmaz.
+  if (isSuppressed(email)) {
+    return {
+      status: "duplicate_blocked",
+      crossBrandDuplicate: 1,
+      note: `Bu e-posta kalıcı "bir daha yazma" listesinde — gönderim engellendi.`,
+    };
+  }
+  const owner = findEmailOwner(email, brandId);
+  if (owner) {
+    return {
+      status: "duplicate_blocked",
+      crossBrandDuplicate: 1,
+      note: `Bu e-posta zaten "${owner.name}" markasına ait/gönderilmiş — aynı kutuya farklı marka adıyla tekrar mail engellendi.`,
+    };
+  }
+  return { status: "found", crossBrandDuplicate: 0, note: null };
+}
+
 // Tek bir marka için email arat
 router.post("/api/brands/:id/find-email", async (req, res) => {
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
 
   try {
-    const result = await findBrandEmail(brand.name, brand.website);
+    const result = await findBrandEmail(brand.name, brand.website, {
+      mainCategory: brand.main_category,
+      subcategory: brand.subcategory,
+      storefrontUrl: brand.storefront_url,
+    });
     // "bounced = 0": bu marka daha önce "mail geri döndü" (bounce) olarak
     // işaretlenmiş olabilir — burada elle ya da "Tekrar E-mail Ara" ile yeniden
     // arama yapılıyorsa, eski bounce bayrağını temizliyoruz ki yeni bulunan e-mail
     // "Ulaşmayanlar" listesinde takılı kalmasın.
+    const { status: resolvedStatus, crossBrandDuplicate, note } = resolveStatusAndDuplicateFlag(
+      result.email,
+      brand.id
+    );
+    const traceLines = [...(result.trace || [])];
+    if (note) traceLines.push(note);
     db.prepare(
-      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0
+      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone)
        WHERE id = ?`
     ).run(
       result.email,
       result.website,
       result.source,
       result.confidence,
-      result.email ? "found" : "not_found",
-      (result.trace || []).join(" | "),
+      resolvedStatus,
+      traceLines.join(" | "),
       result.contactUrl || null,
+      crossBrandDuplicate,
+      result.phone || null,
       brand.id
     );
     const updated = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
@@ -297,18 +355,30 @@ async function processFindAllQueue() {
     const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(id);
     if (!brand) continue;
     try {
-      const result = await findBrandEmail(brand.name, brand.website);
+      const result = await findBrandEmail(brand.name, brand.website, {
+        mainCategory: brand.main_category,
+        subcategory: brand.subcategory,
+        storefrontUrl: brand.storefront_url,
+      });
+      const { status: resolvedStatus, crossBrandDuplicate, note } = resolveStatusAndDuplicateFlag(
+        result.email,
+        brand.id
+      );
+      const traceLines = [...(result.trace || [])];
+      if (note) traceLines.push(note);
       db.prepare(
-        `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0
+        `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone)
          WHERE id = ?`
       ).run(
         result.email,
         result.website,
         result.source,
         result.confidence,
-        result.email ? "found" : "not_found",
-        (result.trace || []).join(" | "),
+        resolvedStatus,
+        traceLines.join(" | "),
         result.contactUrl || null,
+        crossBrandDuplicate,
+        result.phone || null,
         brand.id
       );
     } catch (err) {
@@ -371,14 +441,15 @@ router.get("/api/brands/find-all/status", (req, res) => {
 
 // Marka bilgisini manuel düzenle (email/website)
 router.put("/api/brands/:id", (req, res) => {
-  const { email, website, status } = req.body;
+  const { email, website, status, notes } = req.body;
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
 
-  db.prepare("UPDATE brands SET email = ?, website = ?, status = ? WHERE id = ?").run(
+  db.prepare("UPDATE brands SET email = ?, website = ?, status = ?, notes = ? WHERE id = ?").run(
     email !== undefined ? email : brand.email,
     website !== undefined ? website : brand.website,
     status !== undefined ? status : brand.status,
+    notes !== undefined ? notes : brand.notes,
     brand.id
   );
   res.json({ ok: true });
@@ -420,6 +491,20 @@ router.post("/api/brands/:id/send", async (req, res) => {
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
   if (!brand.email) return res.status(400).json({ error: "Bu marka için e-mail adresi yok." });
+  // Kalıcı "bir daha yazma" listesi her şeyin önünde gelir.
+  if (isSuppressed(brand.email)) {
+    return res.status(409).json({
+      error: `Bu e-posta adresi (${brand.email}) kalıcı "bir daha yazma" listesinde — gönderim engellendi.`,
+    });
+  }
+  // UI zaten bu durumdaki gönder butonunu pasif yapıyor ama API doğrudan çağrılırsa
+  // diye burada da engelliyoruz: bu e-posta başka bir markaya ait/gönderilmiş.
+  const owner = findEmailOwner(brand.email, brand.id);
+  if (owner) {
+    return res.status(409).json({
+      error: `Bu e-posta adresi (${brand.email}) zaten "${owner.name}" markasına ait/gönderilmiş görünüyor — aynı kutuya farklı marka adıyla tekrar mail gönderilmedi.`,
+    });
+  }
 
   const { subject, body } = req.body;
   try {
@@ -446,6 +531,46 @@ function fillTemplateLocal(text, brandName) {
   return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
 }
 
+// Excel'deki "Country" sütununda sıkça görülen ülke adlarının (yaklaşık, tek bir
+// temsili) UTC ofseti. Birçok ülke (ör. ABD, Rusya) birden fazla saat dilimine
+// yayılıyor — bu durumlarda en yaygın/kalabalık bölgeyi temsil eden bir ofis
+// seçildi. Amaç kesin doğruluk değil, "gece yarısı mail atma" gibi bariz kötü
+// zamanlamaları önlemek; ülke bulunamazsa ya da eşleşmezse gönderim ENGELLENMEZ
+// (aşağıdaki fail-open mantığı), sadece bulunanlar için ince bir iyileştirme yapılır.
+const COUNTRY_UTC_OFFSETS = {
+  "united states": -5, us: -5, usa: -5, "u.s.": -5, "u.s.a.": -5,
+  "united kingdom": 0, uk: 0, "u.k.": 0, britain: 0,
+  canada: -5, germany: 1, france: 1, italy: 1, spain: 1, netherlands: 1,
+  belgium: 1, switzerland: 1, austria: 1, poland: 1, sweden: 1, norway: 1,
+  denmark: 1, portugal: 0, ireland: 0,
+  turkey: 3, türkiye: 3, russia: 3,
+  china: 8, japan: 9, "south korea": 9, korea: 9,
+  india: 5.5, pakistan: 5, bangladesh: 6,
+  australia: 10, "new zealand": 12,
+  brazil: -3, mexico: -6, argentina: -3, chile: -4, colombia: -5,
+  "united arab emirates": 4, uae: 4, "saudi arabia": 3, israel: 2, egypt: 2,
+  "south africa": 2, nigeria: 1,
+  vietnam: 7, thailand: 7, indonesia: 7, philippines: 8, malaysia: 8, singapore: 8,
+};
+
+function normalizeCountryKey(country) {
+  return (country || "").trim().toLowerCase();
+}
+
+// Verilen ülke için şu an yerel iş saatleri (09:00-18:00) içinde miyiz? Ülke
+// bilinmiyorsa/eşleşmiyorsa "evet" döner (fail-open) — veri eksikliği yüzünden
+// gönderimin tamamen durmasını istemiyoruz, bu sadece bilinen ülkeler için bir
+// iyileştirme.
+function isLikelyBusinessHoursForCountry(country, now = new Date()) {
+  const key = normalizeCountryKey(country);
+  if (!key || !(key in COUNTRY_UTC_OFFSETS)) return true;
+  const offset = COUNTRY_UTC_OFFSETS[key];
+  const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
+  let localHours = (utcHours + offset) % 24;
+  if (localHours < 0) localHours += 24;
+  return localHours >= 9 && localHours < 18;
+}
+
 // Günlük gönderim limitini aşmadan, gün içine yayılmış şekilde otomatik mail gönderir.
 // server.js'teki cron her ~10 dakikada bir bu fonksiyonu çağırır; her çağrıda en fazla
 // 1 mail gönderir, böylece örn. "günde 60" ayarı gün boyuna doğal şekilde yayılmış olur
@@ -454,6 +579,7 @@ async function runAutoSend() {
   const settings = db.prepare("SELECT * FROM settings WHERE id = 1").get();
   const limit = Number(settings.daily_send_limit) || 0;
   if (limit <= 0) return { sent: 0, reason: "disabled" };
+  if (settings.circuit_breaker_active) return { sent: 0, reason: "circuit_breaker_active" };
   if (!settings.main_subject || !settings.main_body) {
     return { sent: 0, reason: "template_missing" };
   }
@@ -464,14 +590,26 @@ async function runAutoSend() {
     .get(todayStr);
   if (sentTodayRow.c >= limit) return { sent: 0, reason: "limit_reached", sentToday: sentTodayRow.c };
 
-  const candidate = db
+  // İlk bulunanı değil, değer sırasına göre bir GRUP aday çekiyoruz (LIMIT 1 değil) —
+  // çünkü en değerli aday şu an markanın kendi ülkesinde gece yarısı olabilir; o
+  // durumda sırasıyla bir sonraki en değerli, o an iş saatlerinde olan adaya geçiyoruz.
+  // Ülke bilinmiyorsa aday zaten uygun sayılır (bkz. isLikelyBusinessHoursForCountry).
+  const candidatePool = db
     .prepare(
       `SELECT * FROM brands WHERE status = 'found' AND email IS NOT NULL
        AND (confidence IS NULL OR confidence != 'low')
-       ORDER BY id ASC LIMIT 1`
+       AND (cross_brand_duplicate_email IS NULL OR cross_brand_duplicate_email = 0)
+       AND (suppressed IS NULL OR suppressed = 0)
+       ORDER BY COALESCE(brand_score, 0) DESC, COALESCE(est_monthly_revenue, 0) DESC, id ASC
+       LIMIT 25`
     )
-    .get();
-  if (!candidate) return { sent: 0, reason: "no_candidates" };
+    .all();
+  if (candidatePool.length === 0) return { sent: 0, reason: "no_candidates" };
+
+  const candidate = candidatePool.find((b) => isLikelyBusinessHoursForCountry(b.country));
+  if (!candidate) {
+    return { sent: 0, reason: "no_candidates_in_business_hours" };
+  }
 
   const subject = fillTemplateLocal(settings.main_subject, candidate.name);
   const body = fillTemplateLocal(settings.main_body, candidate.name);

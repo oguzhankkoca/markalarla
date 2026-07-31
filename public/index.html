@@ -23,6 +23,11 @@
     <div class="main-content">
       <div class="container">
 
+        <div id="circuitBreakerBanner" class="error-box" style="display:none; margin-bottom:16px;">
+          <div id="circuitBreakerText"></div>
+          <button id="circuitBreakerResetBtn" class="secondary" style="margin-top:8px;">Sorunu inceledim, devam et</button>
+        </div>
+
         <div class="page-header">
           <div>
             <h1>Marka Outreach Paneli</h1>
@@ -40,7 +45,20 @@
           <input type="text" id="settingsCompany" placeholder="Şirket adın" />
           <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
           <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
+          <input type="text" id="settingsCompanyAddress" placeholder="Şirket fiziksel adresi (CAN-SPAM yasası gereği zorunlu, her mailin altına otomatik eklenir)" />
           <button id="saveSettingsBtn" class="secondary">Kaydet</button>
+          <button id="backupNowBtn" class="secondary" title="Her Pazartesi otomatik gider; hemen bir yedek almak için buna basabilirsin" style="margin-left:8px;">💾 Şimdi Yedekle</button>
+          <span class="muted" id="backupStatus" style="margin-left:8px;"></span>
+        </div>
+
+        <div class="card">
+          <h2>🚫 Kalıcı "Bir Daha Yazma" Listesi</h2>
+          <p class="muted">Biri açıkça "unsubscribe" / "bir daha yazma" dediğinde otomatik eklenir; marka kaydı silinse/yeniden yüklense bile bu adrese bir daha ASLA mail gitmez. Buradan elle de ekleyip çıkarabilirsin.</p>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <input type="email" id="suppressionEmailInput" placeholder="ornek@marka.com" style="flex:1;" />
+            <button id="addSuppressionBtn" class="secondary">Ekle</button>
+          </div>
+          <div id="suppressionList" class="muted">Yükleniyor...</div>
         </div>
 
         <div class="card">
@@ -88,6 +106,17 @@
           </p>
           <input type="number" id="dailyLimitInput" min="0" placeholder="Örn: 60" style="max-width:160px;" />
           <button id="saveDailyLimitBtn" class="secondary">Kaydet</button>
+
+          <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+          <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
+            <input type="checkbox" id="rewarmEnabledCheckbox" style="width:auto; margin-top:3px;" />
+            <span>
+              <strong>Soğuk markaları otomatik yeniden dene</strong> (varsayılan kapalı) — hiç yanıt
+              vermeden 3 takip aşamasını da tamamlayan markalara 120 gün, olumsuz yanıt verenlere ise
+              180 gün sonra otomatik olarak bir şans daha verir (her markaya en fazla 2 kez). Kalıcı
+              "bir daha yazma" listesindeki adresler bundan her zaman muaf tutulur.
+            </span>
+          </label>
         </div>
 
         <div class="card card-wide">
@@ -106,6 +135,8 @@
             <button class="filter-tab" data-filter="pending">Beklemede <span class="filter-count" id="countPending">0</span></button>
             <button class="filter-tab" data-filter="contact_form">📩 İletişim Formu Olanlar <span class="filter-count" id="countContactForm">0</span></button>
             <button class="filter-tab" data-filter="low_confidence">⚠️ Düşük Güven <span class="filter-count" id="countLowConfidence">0</span></button>
+            <button class="filter-tab" data-filter="duplicate_blocked">🔁 Tekrar (Engellendi) <span class="filter-count" id="countDuplicateBlocked">0</span></button>
+            <button class="filter-tab" data-filter="suppressed">🚫 Bir Daha Yazma <span class="filter-count" id="countSuppressed">0</span></button>
           </div>
           <p class="muted" style="margin-top:-4px;">Bir sekmeye tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm markalar otomatik seçilir (checkbox işaretlenir) — "Seçilenleri Gönder" ile direkt o gruba gönderebilirsin. ("⚠️ Düşük Güven" sekmesi güvenlik için otomatik seçim yapmaz — bunları gönderme, önce "Ara" ile tekrar arat ya da elle kontrol et.)</p>
           <div style="overflow-x:auto;">

@@ -484,6 +484,90 @@ her koşulda muaf. Bu özellik varsayılan **kapalı** — bilinçli bir tercih,
 kullanıcılar için "hayır" diyen birine tekrar yazmak agresif görünebilir; sen açmayı
 seçersen devreye girer.
 
+## MX Kaydı Kontrolü (v36)
+
+Bir domain'in gerçekten mail alabildiğini (MX kaydı var mı) e-mail bulma sırasında artık
+otomatik kontrol ediyoruz. MX kaydı kesin olarak yoksa (domain hiç mail sunucusu belirtmemiş)
+bulunan e-mailin güven seviyesi otomatik olarak "düşük"e düşürülüyor — o adrese giden her
+mail kesin olarak geri döner, göndermeden önce fark etmen için. Geçici bir DNS sorunu
+(zaman aşımı, sunucu erişilemedi vb.) olursa **cezalandırmıyoruz** — sadece kesin bir "MX
+yok" sonucunda güven düşürülür, belirsiz durumlarda hiçbir şey değişmez.
+
+## SPF/DKIM/DMARC Canlı Doğrulama (v36)
+
+Yukarıdaki "Mailin Spam'e Düşmemesi" bölümü SPF/DKIM/DMARC kaydını nasıl kuracağını
+anlatıyordu ama gerçekten kurulu olup olmadığını sana bırakıyordu. Artık sistem bunu
+kendisi doğrulayabiliyor: **"🔍 SPF / DKIM / DMARC Kontrolü"** kartındaki **"Şimdi Kontrol
+Et"** butonuna basınca, gönderici adresinin (`EMAIL_USER`) domain'i için üç kaydı da canlı
+olarak sorgulayıp SPF var mı, DMARC var mı (ve politikası ne — none/quarantine/reject),
+DKIM'in en yaygın selector'larından biri kurulu mu olduğunu gösterir. DKIM için kesin bir
+"yok" tespiti yapılamaz (domain sahibi özel bir selector adı seçmiş olabilir) — sadece en
+yaygın birkaçı denenir, hiçbiri bulunamazsa bu bir uyarı olarak gösterilir, kesin bir hata
+değildir.
+
+## Kota Tükenmesi Proaktif Uyarısı (v36)
+
+Serper.dev, SerpAPI ya da Hunter.io hesaplarından birinin aylık kotası bittiğinde, e-mail
+bulma sonuçlarının "trace" (detay) kayıtlarında bu genelde bir iz bırakır ama eskiden
+kimse fark etmeden yüzlerce marka için boşuna arama denemesi devam edebiliyordu. Artık bu
+kalıplar (HTTP 429, "kotası bitmiş görünüyor" vb.) tespit edilir edilmez sana **günde en
+fazla bir kez** bir uyarı maili gider — hangi sağlayıcının muhtemelen bittiğini ve panelin
+sağ üstündeki "API Kredileri" kutusundan nasıl kontrol edebileceğini söyler.
+
+## Kademeli Isınma (Warm-up) Otomasyonu (v36, opsiyonel/varsayılan kapalı)
+
+Yeni ya da uzun süre az kullanılmış bir Gmail hesabından birden yüksek hacimde mail atmak
+(ör. günde 60) spam filtrelerinde şüphe uyandırabilir. "Bilgilerin" kartındaki ilgili
+kutucuğu işaretlersen, günlük otomatik gönderim hedefe (**Günlük Gönderim Limiti**'ne) tek
+seferde değil, **kademeli olarak** ulaşır: başlangıç limitinden (varsayılan 10) başlar,
+her hafta belirlediğin miktar kadar (varsayılan +10) artar, ta ki hedefe ulaşana kadar.
+Özelliği kapatıp tekrar açarsan ısınma sıfırdan başlar (yarım kalmış bir ısınmayı
+sürdürmez) — bu bilinçli bir tercih, çünkü uzun süre kapalı kaldıysan hesabın "ısınmışlık"
+durumu da muhtemelen eskisi gibi değildir.
+
+## Doğrulama Çağrılarında Sonnet Kullanımı (v36)
+
+Yapay zeka doğrulaması (ANTHROPIC_API_KEY tanımlıysa) iki kritik karar noktasında —
+"adaylardan hangisi doğru domain" ve "seçilen ana sayfa gerçekten bu markaya mı ait" —
+artık ucuz/hızlı Haiku yerine daha güçlü **Sonnet** modelini kullanıyor. Bu iki çağrı
+zaten düşük hacimli (sadece heuristiğin emin olamadığı durumlarda tetiklenir) olduğu için
+ek maliyet ihmal edilebilir düzeyde kalırken, yanlış siteye/kişiye mail gitme riskini
+daha da azaltır. Yanıt sınıflandırma (bir cevabın olumlu/olumsuz olduğunu anlama) gibi
+daha düşük riskli çağrılar hâlâ Haiku ile çalışmaya devam ediyor — hız ve maliyet dengesi
+için.
+
+## Kalıcı Otomatik Test Seti (v36)
+
+Projeye artık `tests/` klasöründe, harici bir test framework'üne (jest/mocha vb.) ihtiyaç
+duymadan çalışan bir test seti eklendi. Kapsadığı kritik mantık: çapraz marka aynı e-posta
+koruması, kalıcı "bir daha yazma" listesi, bounce oranı güvenlik freni, soğuk marka yeniden
+ısıtma, MX kaydı sınıflandırması, SPF/DKIM/DMARC doğrulaması, kademeli ısınma hesaplaması
+ve ülke bazlı gönderim saati. Her test dosyası kendi izole geçici SQLite veritabanını
+kullanır, gerçek üretim koduna dokunur (kopya/simülasyon değil) ve gerçek bir ağ isteği
+atmaz (DNS sorguları sahte/mock yanıtlarla test edilir). Çalıştırmak için:
+```
+npm test
+```
+(Önce `npm install` ile paketlerin kurulu olması gerekir — bkz. kurulum adımları.) Bir
+şey bozulursa hangi test dosyasının/kontrolün başarısız olduğunu ekranda görürsün.
+
+## Kategori Ağacı (v37)
+
+Excel'inde "Main Category" sütunu varsa (SmartScout tarzı dosyalarda genelde olur),
+marka tablosunun üstünde artık bir **"🗂️ Kategori Ağacı"** bölümü var. Açtığında her
+kategori için kaç marka olduğunu, toplam tahmini aylık ciroyu ve kaç tanesinin "fırsat"
+(e-maili bulunmuş, henüz gönderilmemiş) olduğunu görürsün — kategoriler ciroya göre
+büyükten küçüğe sıralanır. Bir kategoriye tıklayınca tablo o kategoriyle filtrelenir;
+bu filtre üstteki durum sekmeleriyle (Bulunanlar/Gönderilmiş vb.) birlikte, ikisi de
+aynı anda uygulanarak çalışır — ör. hem "Electronics" kategorisine hem "Bulunanlar"
+sekmesine tıklarsan sadece o kategorideki bulunmuş markaları görürsün. Tekrar aynı
+kategoriye tıklayınca filtre kalkar. Excel'inde kategori sütunu hiç yoksa bu bölüm
+otomatik olarak gizlenir.
+
+Ayrıca her marka satırının isim hücresinin altında, varsa küçük bir **"🏷️ Kategori ·
+$X/ay"** etiketi görünür — hangi markanın hangi kategoride olduğunu tabloya bakarken
+de tek bakışta ayırt edebilirsin.
+
 ## Özet / Analitik
 
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim
@@ -638,7 +722,10 @@ brand-outreach-single-user/
     services/inboxChecker.js # Gmail IMAP ile yanıt kontrolü + basit sentiment tahmini
     services/suppression.js  # Kalıcı "bir daha yazma" listesi mantığı
     services/backup.js       # Haftalık veritabanı yedeği mail eki olarak gönderme
+    services/dnsCheck.js     # SPF/DKIM/DMARC canlı DNS doğrulaması
+    services/ai.js           # Anthropic Claude API çağrıları (model seçimi dahil)
   public/                 # Panel (index.html) + Gönderim Takibi (tracking.html)
+  tests/                  # Kalıcı otomatik test seti (npm test ile çalışır)
   sample_brands.csv       # Test için örnek marka listesi
   .env.example
 ```

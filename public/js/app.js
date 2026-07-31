@@ -3,6 +3,9 @@ let brands = [];
 let previewBrandId = null;
 const selectedIds = new Set();
 let currentFilter = "all";
+// Kategori Ağacı: durum sekmelerinden (currentFilter) BAĞIMSIZ, ek bir AND filtresi.
+// null ise hiçbir kategori seçilmemiş demektir (tüm kategoriler görünür).
+let categoryFilter = null;
 
 const emailStatusEl = document.getElementById("emailStatus");
 const brandsBody = document.getElementById("brandsBody");
@@ -112,6 +115,101 @@ function matchesFilter(b, filter) {
   return true;
 }
 
+// Kategori Ağacı: Excel'deki "Main Category" sütunundan (main_category) otomatik
+// oluşur. Boş/eksik olan markalar "Kategorisiz" grubuna düşer — ama Excel'de hiç
+// kategori verisi yoksa (tüm markalar kategorisiz) ağaç hiç gösterilmez, çünkü o
+// durumda gruplamanın hiçbir faydası olmaz.
+const UNCATEGORIZED_LABEL = "Kategorisiz";
+
+function normalizeCategoryName(b) {
+  const c = (b.main_category || "").trim();
+  return c || UNCATEGORIZED_LABEL;
+}
+
+function matchesCategory(b) {
+  if (!categoryFilter) return true;
+  return normalizeCategoryName(b) === categoryFilter;
+}
+
+// Her marka satırının isim hücresinin altında küçük bir "kategori · ciro" etiketi.
+// Kategori bilgisi hiç yoksa (Excel'de sütun yoksa) sessizce hiçbir şey göstermez.
+function categoryChip(b) {
+  const cat = (b.main_category || "").trim();
+  if (!cat) return "";
+  const revenue = formatMoney(b.est_monthly_revenue);
+  const label = revenue ? `${cat} · ${revenue}/ay` : cat;
+  return `<div class="cat-chip" title="${label.replace(/"/g, "&quot;")}">🏷️ ${label}</div>`;
+}
+
+// Her kategori için: kaç marka var, toplam tahmini aylık ciro ne kadar, ve kaç
+// tanesi "fırsat" (e-maili bulunmuş ama henüz gönderilmemiş — status === 'found').
+function computeCategoryTree() {
+  const map = new Map();
+  let anyCategorized = false;
+  for (const b of brands) {
+    const cat = (b.main_category || "").trim();
+    if (cat) anyCategorized = true;
+    const key = cat || UNCATEGORIZED_LABEL;
+    if (!map.has(key)) map.set(key, { name: key, count: 0, revenue: 0, opportunity: 0 });
+    const row = map.get(key);
+    row.count++;
+    if (b.est_monthly_revenue !== null && b.est_monthly_revenue !== undefined && b.est_monthly_revenue !== "") {
+      row.revenue += Number(b.est_monthly_revenue) || 0;
+    }
+    if (b.status === "found") row.opportunity++;
+  }
+  // Excel'de hiç kategori verisi yoksa ağacı hiç gösterme.
+  if (!anyCategorized) return [];
+  return Array.from(map.values()).sort((a, b) => b.revenue - a.revenue || b.count - a.count);
+}
+
+function renderCategoryTree() {
+  const container = document.getElementById("categoryTree");
+  const details = document.getElementById("categoryTreeDetails");
+  if (!container || !details) return;
+  const rows = computeCategoryTree();
+  document.getElementById("categoryTreeCount").textContent = rows.length;
+
+  if (rows.length === 0) {
+    details.style.display = "none";
+    return;
+  }
+  details.style.display = "";
+
+  const totalCount = brands.length;
+  const allRowHtml = `
+    <div class="category-row cat-all" data-category="">
+      <span class="cat-name">Tümü</span>
+      <span class="cat-stat">${totalCount} marka</span>
+    </div>
+  `;
+  const rowsHtml = rows
+    .map((r) => {
+      const active = categoryFilter === r.name ? " active" : "";
+      const revenueLabel = r.revenue > 0 ? formatMoney(r.revenue) + "/ay" : "-";
+      return `
+        <div class="category-row${active}" data-category="${r.name.replace(/"/g, "&quot;")}">
+          <span class="cat-name">${r.name}</span>
+          <span class="cat-stat">${revenueLabel}</span>
+          <span class="cat-stat cat-opportunity">🚀 ${r.opportunity} fırsat</span>
+          <span class="cat-stat">${r.count} marka</span>
+        </div>
+      `;
+    })
+    .join("");
+  container.innerHTML = allRowHtml + rowsHtml;
+}
+
+// Bir kategoriye tıklayınca tabloyu o kategoriyle filtreler (mevcut durum sekmesiyle
+// birlikte, AND mantığıyla çalışır); aynı kategoriye tekrar tıklayınca filtre kalkar.
+document.getElementById("categoryTree").addEventListener("click", (e) => {
+  const row = e.target.closest(".category-row");
+  if (!row) return;
+  const cat = row.dataset.category;
+  categoryFilter = !cat || categoryFilter === cat ? null : cat;
+  renderBrands();
+});
+
 function renderFilterTabs() {
   const counts = { all: brands.length, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0, duplicate_blocked: 0, suppressed: 0 };
   for (const b of brands) {
@@ -142,7 +240,7 @@ function renderFilterTabs() {
 
 function renderBrands() {
   brandsBody.innerHTML = "";
-  const visibleBrands = brands.filter((b) => matchesFilter(b, currentFilter));
+  const visibleBrands = brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b));
   for (const b of visibleBrands) {
     const tr = document.createElement("tr");
     const contactLine =
@@ -153,7 +251,7 @@ function renderBrands() {
     const sentViaTag = b.status === "sent" && b.sent_via === "contact_form" ? " (form ile)" : "";
     tr.innerHTML = `
       <td><input type="checkbox" class="row-checkbox" data-id="${b.id}" ${checked} /></td>
-      <td>${b.name}</td>
+      <td>${b.name}${categoryChip(b)}</td>
       <td class="muted">${marketSummary(b)}</td>
       <td><input data-field="website" data-id="${b.id}" value="${b.website || ""}" /></td>
       <td>
@@ -185,6 +283,7 @@ function renderBrands() {
   attachRowEvents();
   updateSelectedCount();
   renderFilterTabs();
+  renderCategoryTree();
 }
 
 function updateSelectedCount() {
@@ -398,6 +497,20 @@ async function loadSettings() {
 
   document.getElementById("dailyLimitInput").value = s.daily_send_limit || 0;
   document.getElementById("rewarmEnabledCheckbox").checked = Boolean(s.rewarm_enabled);
+
+  document.getElementById("warmupEnabledCheckbox").checked = Boolean(s.warmup_enabled);
+  document.getElementById("warmupStartLimitInput").value = s.warmup_start_limit || 10;
+  document.getElementById("warmupIncrementInput").value = s.warmup_increment || 10;
+  document.getElementById("warmupFields").style.display = s.warmup_enabled ? "flex" : "none";
+  if (s.warmup_enabled && s.warmup_started_at) {
+    const daysElapsed = Math.floor((Date.now() - new Date(s.warmup_started_at).getTime()) / (1000 * 60 * 60 * 24));
+    const weeksElapsed = Math.max(0, Math.floor(daysElapsed / 7));
+    const current = Math.min(
+      (s.warmup_start_limit || 10) + weeksElapsed * (s.warmup_increment || 10),
+      s.daily_send_limit || 0
+    );
+    document.getElementById("warmupStatus").textContent = `Şu anki etkin limit: ${current}/gün (hedef: ${s.daily_send_limit || 0})`;
+  }
 }
 
 async function loadBrands() {
@@ -588,6 +701,34 @@ document.getElementById("rewarmEnabledCheckbox").addEventListener("change", asyn
   });
 });
 
+document.getElementById("warmupEnabledCheckbox").addEventListener("change", async (e) => {
+  document.getElementById("warmupFields").style.display = e.target.checked ? "flex" : "none";
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      warmup_enabled: e.target.checked,
+      warmup_start_limit: Number(document.getElementById("warmupStartLimitInput").value) || 10,
+      warmup_increment: Number(document.getElementById("warmupIncrementInput").value) || 10,
+    }),
+  });
+  loadSettings();
+});
+
+document.getElementById("saveWarmupBtn").addEventListener("click", async () => {
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      warmup_enabled: document.getElementById("warmupEnabledCheckbox").checked,
+      warmup_start_limit: Number(document.getElementById("warmupStartLimitInput").value) || 10,
+      warmup_increment: Number(document.getElementById("warmupIncrementInput").value) || 10,
+    }),
+  });
+  loadSettings();
+  alert("Isınma ayarları kaydedildi.");
+});
+
 document.getElementById("saveDailyLimitBtn").addEventListener("click", async () => {
   const value = Number(document.getElementById("dailyLimitInput").value) || 0;
   await fetch("/api/settings", {
@@ -698,7 +839,7 @@ document.getElementById("sendSelectedBtn").addEventListener("click", () => {
 selectAllCheckbox.addEventListener("change", () => {
   // Bir filtre sekmesi aktifse "tümünü seç" sadece o an görünen (filtrelenmiş)
   // markaları etkiler, gizli olanları değil.
-  const visible = brands.filter((b) => matchesFilter(b, currentFilter));
+  const visible = brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b));
   if (selectAllCheckbox.checked) {
     visible.forEach((b) => selectedIds.add(String(b.id)));
   } else {
@@ -718,7 +859,7 @@ document.querySelectorAll(".filter-tab").forEach((btn) => {
     currentFilter = btn.dataset.filter;
     if (currentFilter !== "all" && currentFilter !== "low_confidence") {
       selectedIds.clear();
-      brands.filter((b) => matchesFilter(b, currentFilter)).forEach((b) => selectedIds.add(String(b.id)));
+      brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b)).forEach((b) => selectedIds.add(String(b.id)));
     }
     renderBrands();
   });
@@ -872,6 +1013,38 @@ document.getElementById("addSuppressionBtn")?.addEventListener("click", async ()
   input.value = "";
   loadSuppressionList();
   loadBrands();
+});
+
+document.getElementById("checkDnsHealthBtn")?.addEventListener("click", async () => {
+  const resultEl = document.getElementById("dnsHealthResult");
+  resultEl.innerHTML = `<span class="muted">Kontrol ediliyor...</span>`;
+  try {
+    const res = await fetch("/api/settings/dns-health");
+    const data = await res.json();
+    if (data.error) {
+      resultEl.innerHTML = `<span class="warn">${data.error}</span>`;
+      return;
+    }
+    const row = (label, ok, detail) => {
+      const icon = ok === true ? "✅" : ok === false ? "❌" : "❓";
+      return `<div style="margin-bottom:6px;">${icon} <strong>${label}</strong>${detail ? ` — ${detail}` : ""}</div>`;
+    };
+    let html = `<div class="muted" style="margin-bottom:8px;">Domain: ${data.domain}</div>`;
+    html += row("SPF", data.spf.found, data.spf.record ? data.spf.record.slice(0, 80) : (data.spf.checked ? "bulunamadı" : "kontrol edilemedi"));
+    html += row(
+      "DMARC",
+      data.dmarc.found,
+      data.dmarc.found ? `politika: ${data.dmarc.policy || "belirtilmemiş"}` : (data.dmarc.checked ? "bulunamadı" : "kontrol edilemedi")
+    );
+    html += row(
+      "DKIM",
+      data.dkim.found,
+      data.dkim.found ? `selector: ${data.dkim.selectors.join(", ")}` : (data.dkim.note || "kontrol edilemedi")
+    );
+    resultEl.innerHTML = html;
+  } catch (e) {
+    resultEl.innerHTML = `<span class="warn">Kontrol edilemedi: ${e.message}</span>`;
+  }
 });
 
 document.getElementById("backupNowBtn")?.addEventListener("click", async () => {

@@ -338,6 +338,62 @@ td input[type="checkbox"] { min-width: 0; width: auto; padding: 0; }
   opacity: 0.75;
 }
 
+/* ---------- Kategori Ağacı ---------- */
+.category-tree-toggle {
+  display: block;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--primary-dark);
+  padding: 8px 0;
+  margin-bottom: 4px;
+  list-style: none;
+}
+.category-tree-toggle::-webkit-details-marker { display: none; }
+.category-tree-toggle::before { content: "▸ "; }
+details[open] > .category-tree-toggle::before { content: "▾ "; }
+.category-tree {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.category-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+.category-row:last-child { border-bottom: none; }
+.category-row:hover { background: #fafaff; }
+.category-row.active { background: var(--primary-soft); }
+.category-row .cat-name { font-weight: 700; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-row .cat-stat { color: var(--text-muted); white-space: nowrap; }
+.category-row .cat-stat.cat-opportunity { color: var(--primary-dark); font-weight: 700; }
+.category-row.cat-all { font-weight: 700; background: #f7f7fb; }
+
+/* Marka satırında isim hücresinin altında kategori + tahmini aylık ciroyu küçük bir
+   etiket olarak gösterir (ekran görüntülerindeki kategori rozetine benzer, tabloyu
+   bozmadan). Kategori bilgisi yoksa hiç render edilmez. */
+.cat-chip {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef0f6;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Takip sayfasındaki filtre sekmeleri, panel sekmeleriyle aynı görünümü paylaşır */
 .track-filter-tab {
   background: #eef0f6;

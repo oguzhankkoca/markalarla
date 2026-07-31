@@ -293,6 +293,39 @@ function resolveStatusAndDuplicateFlag(email, brandId) {
   return { status: "found", crossBrandDuplicate: 0, note: null };
 }
 
+// Arama sağlayıcılarından biri (Serper/SerpAPI/Hunter) kota bitmiş gibi görünen
+// bir hata verdiğinde emailFinder.js bunu trace mesajlarına ekliyor (ör. "kotası
+// bitmiş görünüyor", "HTTP 429"). Bu sessizce geçip gidiyordu — kullanıcı sadece
+// bulma oranının garip şekilde düştüğünü fark edebiliyordu, NEDENİNİ anlaması
+// zordu. Şimdi bu kalıpları trace'te yakalayıp günde en fazla bir kez bildirim
+// mailiyle haber veriyoruz (yüzlerce marka için tekrar tekrar göndermemek için).
+const QUOTA_TRACE_PATTERN = /kotas[ıi] bitmiş|HTTP 429|insufficient credit|run out|no searches left/i;
+
+async function checkAndNotifyQuotaExhaustion(traceLines) {
+  if (!traceLines || !traceLines.some((line) => QUOTA_TRACE_PATTERN.test(line))) return;
+  try {
+    const settings = db.prepare("SELECT quota_alert_notified_at FROM settings WHERE id = 1").get();
+    if (settings.quota_alert_notified_at) {
+      const ageMs = Date.now() - new Date(settings.quota_alert_notified_at).getTime();
+      if (ageMs < 24 * 60 * 60 * 1000) return; // son 24 saatte zaten bildirim gitmiş
+    }
+    const matchedLines = traceLines.filter((line) => QUOTA_TRACE_PATTERN.test(line));
+    await mailer.sendMail({
+      to: process.env.EMAIL_USER,
+      subject: "⚠️ Arama sağlayıcılarından biri kota bitmiş gibi görünüyor",
+      body:
+        `Marka e-mail arama sırasında şu uyarı(lar) tespit edildi:\n\n${matchedLines.slice(0, 5).join("\n")}\n\n` +
+        `Bu genelde Serper.dev, SerpAPI ya da Hunter.io hesaplarından birinin aylık kotasının bittiği anlamına gelir. ` +
+        `Panelin sağ üstündeki "API Kredileri" panelinden hangi servisin bittiğini kontrol edebilir, gerekirse planını ` +
+        `yükseltebilir ya da bir sonraki ay/faturalama döngüsünü bekleyebilirsin. Sistem otomatik olarak diğer sağlayıcılara ` +
+        `(varsa) geçmeye devam ediyor, ama hiçbiri kalmazsa bulma oranı düşebilir.`,
+    });
+    db.prepare("UPDATE settings SET quota_alert_notified_at = CURRENT_TIMESTAMP WHERE id = 1").run();
+  } catch (e) {
+    // Bildirim gönderilemezse sessizce geç — asıl email arama akışını bozmasın.
+  }
+}
+
 // Tek bir marka için email arat
 router.post("/api/brands/:id/find-email", async (req, res) => {
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
@@ -314,6 +347,7 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
     );
     const traceLines = [...(result.trace || [])];
     if (note) traceLines.push(note);
+    await checkAndNotifyQuotaExhaustion(traceLines);
     db.prepare(
       `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone)
        WHERE id = ?`
@@ -366,6 +400,7 @@ async function processFindAllQueue() {
       );
       const traceLines = [...(result.trace || [])];
       if (note) traceLines.push(note);
+      await checkAndNotifyQuotaExhaustion(traceLines);
       db.prepare(
         `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone)
          WHERE id = ?`
@@ -531,6 +566,24 @@ function fillTemplateLocal(text, brandName) {
   return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
 }
 
+// Kademeli ısınma açıksa, günlük limit hedefe (daily_send_limit) tek seferde değil,
+// warmup_started_at'ten itibaren her hafta warmup_increment kadar artarak ulaşır.
+// Kapalıysa ya da başlangıç zamanı hiç ayarlanmadıysa hedefin kendisi kullanılır
+// (eskisi gibi davranır — geriye dönük uyumlu).
+function getEffectiveDailyLimit(settings) {
+  const target = Number(settings.daily_send_limit) || 0;
+  if (!settings.warmup_enabled || !settings.warmup_started_at) return target;
+
+  const startLimit = Number(settings.warmup_start_limit) || 10;
+  const increment = Number(settings.warmup_increment) || 10;
+  const daysElapsed = Math.floor(
+    (Date.now() - new Date(settings.warmup_started_at).getTime()) / (1000 * 60 * 60 * 24)
+  );
+  const weeksElapsed = Math.max(0, Math.floor(daysElapsed / 7));
+  const current = startLimit + weeksElapsed * increment;
+  return Math.min(current, target);
+}
+
 // Excel'deki "Country" sütununda sıkça görülen ülke adlarının (yaklaşık, tek bir
 // temsili) UTC ofseti. Birçok ülke (ör. ABD, Rusya) birden fazla saat dilimine
 // yayılıyor — bu durumlarda en yaygın/kalabalık bölgeyi temsil eden bir ofis
@@ -577,7 +630,7 @@ function isLikelyBusinessHoursForCountry(country, now = new Date()) {
 // (60 mail art arda gönderilirse Gmail/alıcı tarafında spam gibi görünme riski artar).
 async function runAutoSend() {
   const settings = db.prepare("SELECT * FROM settings WHERE id = 1").get();
-  const limit = Number(settings.daily_send_limit) || 0;
+  const limit = getEffectiveDailyLimit(settings);
   if (limit <= 0) return { sent: 0, reason: "disabled" };
   if (settings.circuit_breaker_active) return { sent: 0, reason: "circuit_breaker_active" };
   if (!settings.main_subject || !settings.main_body) {
@@ -635,3 +688,12 @@ async function runAutoSend() {
 
 module.exports = router;
 module.exports.runAutoSend = runAutoSend;
+// Aşağıdaki saf mantık fonksiyonları, kalıcı otomatik test setinin (tests/) gerçek
+// üretim kodunu (kopya/simülasyon değil) doğrudan çağırıp doğrulayabilmesi için
+// dışa aktarıldı — router'ın kendi davranışını değiştirmez, sadece test edilebilirlik
+// ekler.
+module.exports.findEmailOwner = findEmailOwner;
+module.exports.resolveStatusAndDuplicateFlag = resolveStatusAndDuplicateFlag;
+module.exports.getEffectiveDailyLimit = getEffectiveDailyLimit;
+module.exports.isLikelyBusinessHoursForCountry = isLikelyBusinessHoursForCountry;
+module.exports.QUOTA_TRACE_PATTERN = QUOTA_TRACE_PATTERN;

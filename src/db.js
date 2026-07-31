@@ -183,6 +183,21 @@ ensureColumn("settings", "rewarm_enabled", "INTEGER DEFAULT 0");
 // Bir marka en fazla kaç kez otomatik yeniden ısıtılabilir (sonsuz döngüyü önlemek için).
 ensureColumn("brands", "rewarm_count", "INTEGER DEFAULT 0");
 
+// Arama sağlayıcılarından (Serper/SerpAPI/Hunter) biri kota bitmiş gibi görünen
+// bir hata verdiğinde, aynı toplu aramada yüzlerce marka için tekrar tekrar mail
+// atmamak için en fazla günde bir kez bildirim gönderiyoruz — bu, o son bildirimin
+// ne zaman gittiğini tutar.
+ensureColumn("settings", "quota_alert_notified_at", "TEXT");
+
+// Kademeli ısınma (warm-up) otomasyonu: yeni/az kullanılan bir gönderim düzeninde
+// birden yüksek hacimde mail atmak spam filtrelerinde şüphe uyandırabiliyor.
+// Bu özellik açıkken günlük limit hedefe (daily_send_limit) tek seferde değil,
+// haftalık kademeli olarak ulaşır.
+ensureColumn("settings", "warmup_enabled", "INTEGER DEFAULT 0");
+ensureColumn("settings", "warmup_start_limit", "INTEGER DEFAULT 10");
+ensureColumn("settings", "warmup_increment", "INTEGER DEFAULT 10");
+ensureColumn("settings", "warmup_started_at", "TEXT");
+
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`
   UPDATE brands SET name_normalized = LOWER(TRIM(name))

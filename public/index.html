@@ -52,6 +52,13 @@
         </div>
 
         <div class="card">
+          <h2>🔍 SPF / DKIM / DMARC Kontrolü</h2>
+          <p class="muted">Mailin spam'e düşmemesi için en kritik üç DNS kaydını canlı olarak sorgular — README'deki kurulum talimatını uyguladıktan sonra gerçekten doğru kurulup kurulmadığını burada doğrulayabilirsin.</p>
+          <button id="checkDnsHealthBtn" class="secondary">Şimdi Kontrol Et</button>
+          <div id="dnsHealthResult" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="card">
           <h2>🚫 Kalıcı "Bir Daha Yazma" Listesi</h2>
           <p class="muted">Biri açıkça "unsubscribe" / "bir daha yazma" dediğinde otomatik eklenir; marka kaydı silinse/yeniden yüklense bile bu adrese bir daha ASLA mail gitmez. Buradan elle de ekleyip çıkarabilirsin.</p>
           <div style="display:flex; gap:8px; margin-bottom:10px;">
@@ -109,6 +116,20 @@
 
           <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
           <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
+            <input type="checkbox" id="warmupEnabledCheckbox" style="width:auto; margin-top:3px;" />
+            <span>
+              <strong>Kademeli ısınma (warm-up)</strong> — yukarıdaki limite tek seferde değil,
+              haftalık kademeli artarak ulaş (yeni/az kullanılan bir gönderim düzeninde
+              birden yüksek hacim spam filtrelerinde şüphe uyandırabilir).
+            </span>
+          </label>
+          <div id="warmupFields" style="display:none; margin-top:8px; align-items:center; gap:8px;">
+            <label class="muted">Başlangıç: <input type="number" id="warmupStartLimitInput" min="1" style="max-width:90px;" value="10" /></label>
+            <label class="muted">Haftalık artış: <input type="number" id="warmupIncrementInput" min="1" style="max-width:90px;" value="10" /></label>
+            <button id="saveWarmupBtn" class="secondary">Kaydet</button>
+            <span class="muted" id="warmupStatus"></span>
+          </div>
+          <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
             <input type="checkbox" id="rewarmEnabledCheckbox" style="width:auto; margin-top:3px;" />
             <span>
               <strong>Soğuk markaları otomatik yeniden dene</strong> (varsayılan kapalı) — hiç yanıt
@@ -139,6 +160,13 @@
             <button class="filter-tab" data-filter="suppressed">🚫 Bir Daha Yazma <span class="filter-count" id="countSuppressed">0</span></button>
           </div>
           <p class="muted" style="margin-top:-4px;">Bir sekmeye tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm markalar otomatik seçilir (checkbox işaretlenir) — "Seçilenleri Gönder" ile direkt o gruba gönderebilirsin. ("⚠️ Düşük Güven" sekmesi güvenlik için otomatik seçim yapmaz — bunları gönderme, önce "Ara" ile tekrar arat ya da elle kontrol et.)</p>
+
+          <details id="categoryTreeDetails">
+            <summary class="category-tree-toggle">🗂️ Kategori Ağacı (<span id="categoryTreeCount">0</span>)</summary>
+            <p class="muted" style="margin-top:0;">Excel'deki "Main Category" sütunundan otomatik oluşur. Bir kategoriye tıklayınca tablo o kategoriyle filtrelenir (üstteki durum sekmesiyle birlikte çalışır); tekrar tıklayınca filtre kalkar.</p>
+            <div class="category-tree" id="categoryTree"></div>
+          </details>
+
           <div style="overflow-x:auto;">
           <table id="brandsTable">
             <colgroup>

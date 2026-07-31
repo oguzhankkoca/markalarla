@@ -1,6 +1,7 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
 const net = require("net");
+const dns = require("dns").promises;
 const ai = require("./ai");
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
@@ -373,7 +374,11 @@ Bu adaylardan hangisi "${brandName}" markasının GERÇEK, RESMİ kurumsal web s
 Sadece şu JSON formatında cevap ver, başka hiçbir açıklama ekleme:
 {"index": <1'den başlayan aday numarası ya da null>, "confidence": "high"|"medium"|"low", "reason": "kısa Türkçe açıklama"}`;
 
-  const result = await ai.askClaude(prompt, { maxTokens: 200 });
+  // Bu, hangi domain'in doğru marka olduğuna karar veren kritik bir seçim — yanlış
+  // seçim doğrudan yanlış şirkete mail gitmesine yol açar. Hacim düşük (sadece
+  // heuristiğin emin olamadığı durumlarda çağrılır) olduğu için Sonnet kullanmak
+  // ek maliyeti ihmal edilebilir düzeyde tutarken doğruluğu artırır.
+  const result = await ai.askClaude(prompt, { maxTokens: 200, model: "claude-sonnet-5" });
   if (!result) return null;
   if (result.error) {
     trace.push(`AI doğrulama hatası (domain seçimi): ${result.error}`);
@@ -676,6 +681,23 @@ async function findLinkedInSignal(brandName, trace) {
   }
 
   return null;
+}
+
+// MX kaydı kontrolü: bir domain'e "resmi site" olarak karar verdikten sonra, o
+// domain'in gerçekten mail ALABİLEN bir sunucusu var mı diye bakıyoruz. Bu, hiçbir
+// ek paket/API gerektirmeyen (Node'un yerleşik dns modülü), ücretsiz ve çok ucuz bir
+// kontrol — ama bounce oranını düşürmek için en doğrudan sinyallerden biri: MX kaydı
+// yoksa o adrese giden HER mail kesin olarak geri döner.
+// Döner: true (MX var), false (MX kesinlikle yok — ENOTFOUND/ENODATA), null (geçici
+// bir DNS sorunu, karar veremedik — bu durumda cezalandırmıyoruz).
+async function checkMxRecords(domain) {
+  try {
+    const records = await dns.resolveMx(domain);
+    return Array.isArray(records) && records.length > 0;
+  } catch (e) {
+    if (e.code === "ENOTFOUND" || e.code === "ENODATA") return false;
+    return null; // ESERVFAIL, timeout vb. geçici sorunlar — bilinmiyor say
+  }
 }
 
 // Domain yaşı (WHOIS) sinyali: yeni npm paketi kurmadan, Node'un yerleşik `net`
@@ -1007,7 +1029,9 @@ içerik/ürünler/başlık markayla açıkça örtüşüyorsa evet diyebilirsin.
 Sadece şu JSON formatında cevap ver, başka açıklama ekleme:
 {"is_official": true|false, "confidence": "high"|"medium"|"low", "reason": "kısa Türkçe açıklama"}`;
 
-  const result = await ai.askClaude(prompt, { maxTokens: 150 });
+  // Ana sayfanın gerçekten markaya ait olup olmadığına karar veren son kontrol —
+  // aynı gerekçeyle (yanlış onay = yanlış şirkete mail) burada da Sonnet kullanılıyor.
+  const result = await ai.askClaude(prompt, { maxTokens: 150, model: "claude-sonnet-5" });
   if (!result) return null;
   if (result.error) {
     trace.push(`AI doğrulama hatası (ana sayfa): ${result.error}`);
@@ -1222,6 +1246,18 @@ async function findBrandEmail(brandName, providedWebsite, extra = {}) {
     trace.push("Bu domain düşük güvenle seçildi — göndermeden önce mutlaka elle kontrol et.");
   }
 
+  // MX kaydı yoksa bu domain'e giden HİÇBİR mail teslim edilemez — ne kadar emin
+  // olursak olalım (yüksek güvenle doğrulanmış bile olsa) nihai güveni düşürüyoruz
+  // ki gönderim öncesi mutlaka elle kontrol edilsin. Geçici bir DNS sorunu varsa
+  // (mxOk === null) cezalandırmıyoruz.
+  const mxOk = await checkMxRecords(domain);
+  if (mxOk === false) {
+    trace.push(
+      `UYARI: "${domain}" için MX (mail) kaydı bulunamadı — bu domain e-posta ALAMIYOR olabilir, gönderilirse kesin olarak geri dönebilir.`
+    );
+  }
+  const applyMxPenalty = (confidence) => (mxOk === false ? "low" : confidence);
+
   const hunterEmails = await findEmailsViaHunter(domain, trace);
   if (hunterEmails.length > 0) {
     const cleaned = cleanEmails(hunterEmails, domain);
@@ -1230,7 +1266,7 @@ async function findBrandEmail(brandName, providedWebsite, extra = {}) {
         email: cleaned[0].email,
         website,
         source: "hunter.io",
-        confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain, cleaned[0].hunterConfidence),
+        confidence: applyMxPenalty(blendConfidence(domainConfidence, cleaned[0].sameDomain, cleaned[0].hunterConfidence)),
         contactUrl: null,
         phone: cleaned[0].phone || null,
         trace,
@@ -1271,10 +1307,13 @@ async function findBrandEmail(brandName, providedWebsite, extra = {}) {
     email: cleaned[0].email,
     website,
     source: "site_taramasi",
-    confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain),
+    confidence: applyMxPenalty(blendConfidence(domainConfidence, cleaned[0].sameDomain)),
     contactUrl: null,
     trace,
   };
 }
 
 module.exports = { findBrandEmail };
+// Test setinin (tests/) MX kaydı sınıflandırma mantığını (true/false/null) doğrudan
+// çağırıp doğrulayabilmesi için dışa aktarıldı — findBrandEmail'in davranışını değiştirmez.
+module.exports.checkMxRecords = checkMxRecords;

@@ -677,3 +677,7 @@ module.exports = router;
 module.exports.runFullCheck = runFullCheck;
 module.exports.sendWeeklySummary = sendWeeklySummary;
 module.exports.reWarmColdBrands = reWarmColdBrands;
+// Test setinin (tests/) gerçek güvenlik freni mantığını doğrudan çağırabilmesi için.
+module.exports.checkAndUpdateCircuitBreaker = checkAndUpdateCircuitBreaker;
+module.exports.CIRCUIT_BREAKER_MIN_SAMPLE = CIRCUIT_BREAKER_MIN_SAMPLE;
+module.exports.CIRCUIT_BREAKER_THRESHOLD = CIRCUIT_BREAKER_THRESHOLD;

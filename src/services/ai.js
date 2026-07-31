@@ -21,13 +21,19 @@ const httpClient = axios.create({
 // Basit bir prompt gönderip metin yanıtı alır. Model JSON döndürmesi istenen
 // promptlarda bile bazen açıklama ekleyebilir; çağıran taraf yanıt içinden
 // { ... } bloğunu ayıklayarak parse eder.
-async function askClaude(prompt, { maxTokens = 250 } = {}) {
+//
+// model parametresi: varsayılan olarak ucuz/hızlı Haiku kullanılır (yanıt sınıflandırma
+// gibi düşük riskli çağrılar için yeterli). Yanlış kararın maliyetli olduğu kritik
+// doğrulama çağrıları (örn. hangi domain'in markaya ait olduğuna karar vermek) çağıran
+// taraftan model: "claude-sonnet-5" geçerek daha güçlü modeli kullanabilir — hacim düşük
+// olduğu için ek maliyet ihmal edilebilir düzeydedir.
+async function askClaude(prompt, { maxTokens = 250, model } = {}) {
   if (!isConfigured()) return null;
   try {
     const res = await httpClient.post(
       "https://api.anthropic.com/v1/messages",
       {
-        model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+        model: model || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
         max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       },

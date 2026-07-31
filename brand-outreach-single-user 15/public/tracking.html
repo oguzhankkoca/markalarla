@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>Gönderim Takibi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">🚀 <span class="logo-text">Neofa Outreach</span></div>
+      <nav>
+        <a href="/index.html" class="nav-link">📋 <span class="nav-label">Panel</span></a>
+        <a href="/tracking.html" class="nav-link active">📬 <span class="nav-label">Gönderim Takibi</span></a>
+        <a href="/analytics.html" class="nav-link">📊 <span class="nav-label">Özet</span></a>
+      </nav>
+    </aside>
+
+    <div class="main-content">
+      <div class="container">
+
+        <div class="page-header">
+          <div>
+            <h1>Gönderim Takibi</h1>
+            <p>Yanıtları izle, otomatik takip mailleri gönder, anlaşma aşamalarını yönet.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>📪 Ulaşmayanlar (Mail Geri Döndü) <span class="filter-count" id="bouncedCount">0</span></h2>
+          <p class="muted">
+            "Yanıtları Kontrol Et" butonuna bastığında Gmail gelen kutusu bounce (teslim
+            edilemedi) bildirimleri için de taranır. Bir mail geri dönerse marka burada
+            listelenir — genelde e-mail adresi yanlış/eskimiştir. "Tekrar E-mail Ara"
+            butonuyla o marka için sistemin yeni bir e-mail bulmasını isteyebilirsin;
+            yeni bir e-mail bulunursa marka buradan kalkar ve panelden (Panel sayfası)
+            tekrar gönderilebilir hale gelir.
+          </p>
+          <div style="overflow-x:auto;">
+          <table id="bouncedTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>Geri Dönen E-mail</th>
+                <th>Ne Zaman Gönderilmişti</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="bouncedBody"></tbody>
+          </table>
+          </div>
+          <p class="muted" id="bouncedEmptyMsg">Şu an ulaşmayan (geri dönen) mail yok.</p>
+        </div>
+
+        <div class="card">
+          <h2>📎 Belge/Onay İsteyen Markalar <span class="filter-count" id="docRequestedCount">0</span></h2>
+          <p class="muted">
+            Bir marka yanıtında iş lisansı, yeniden satış/bayilik sertifikası, vergi kimlik
+            no (EIN/Tax ID), W9 formu gibi bir belge/evrak isterse (anahtar kelime taraması
+            ve, tanımlıysa, yapay zeka analiziyle tespit edilir) burada listelenir. İlgili
+            belgeyi gönderdikten sonra "Belge Gönderildi, İşaretle" ile listeden kaldırabilirsin.
+          </p>
+          <div style="overflow-x:auto;">
+          <table id="docRequestedTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>Gönderen</th>
+                <th>Yanıt Özeti</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="docRequestedBody"></tbody>
+          </table>
+          </div>
+          <p class="muted" id="docRequestedEmptyMsg">Şu an belge/evrak isteyen marka yok.</p>
+        </div>
+
+        <div class="card">
+          <h2>✉️ Takip Mail Şablonları (3 aşamalı otomatik takip)</h2>
+          <p class="muted">Yanıt gelmezse gönderim tarihinden itibaren gün 7'de 1. aşama, gün 14'te 2. aşama, gün 30'da (1 ay) 3. aşama otomatik gönderilir.</p>
+
+          <h3>1. Aşama (7. gün)</h3>
+          <input type="text" id="followupSubject1" placeholder="Konu" />
+          <div class="rte-toolbar" data-target="followupBody1">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="followupBody1" class="rich-editor small" contenteditable="true" data-placeholder="İçerik. {{marka}} otomatik değişir."></div>
+
+          <h3>2. Aşama (14. gün)</h3>
+          <input type="text" id="followupSubject2" placeholder="Konu" />
+          <div class="rte-toolbar" data-target="followupBody2">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="followupBody2" class="rich-editor small" contenteditable="true" data-placeholder="İçerik. {{marka}} otomatik değişir."></div>
+
+          <h3>3. Aşama (30. gün / 1 ay, son)</h3>
+          <input type="text" id="followupSubject3" placeholder="Konu" />
+          <div class="rte-toolbar" data-target="followupBody3">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="followupBody3" class="rich-editor small" contenteditable="true" data-placeholder="İçerik. {{marka}} otomatik değişir."></div>
+
+          <button id="saveFollowupBtn" class="secondary">Şablonları kaydet</button>
+        </div>
+
+        <div class="card">
+          <h2>📋 Takip Listesi</h2>
+          <div class="toolbar">
+            <button id="checkRepliesBtn">Yanıtları Kontrol Et</button>
+            <button id="exportBtn" class="secondary">Excel'e Aktar</button>
+            <span class="muted" id="checkStatus"></span>
+          </div>
+          <p class="muted">
+            "Yanıtları Kontrol Et" Gmail gelen kutunu kontrol eder: yanıt gelen markaları bulur,
+            olumlu/olumsuz tahmini yapar (olumlu yanıtta sana ayrıca bildirim maili gider) ve zamanı
+            gelen markalara sıradaki takip aşamasını otomatik gönderir. Bu özellik için Gmail
+            hesabında IMAP açık olmalı (Gmail Ayarlar &gt; Yönlendirme ve POP/IMAP &gt; IMAP'i Etkinleştir).
+          </p>
+          <div style="overflow-x:auto;">
+          <table id="trackingTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>Gönderildi</th>
+                <th>Yanıt</th>
+                <th>Takip Aşaması</th>
+                <th>Anlaşma Durumu</th>
+                <th>Not</th>
+                <th>Geçmiş</th>
+              </tr>
+            </thead>
+            <tbody id="trackingBody"></tbody>
+          </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/tracking.js"></script>
+</body>
+</html>

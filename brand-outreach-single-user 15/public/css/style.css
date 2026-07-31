@@ -1,0 +1,393 @@
+:root {
+  --bg: #f4f5fa;
+  --surface: #ffffff;
+  --border: #e7e8f0;
+  --text: #1a1b2e;
+  --text-muted: #6b6f8a;
+  --primary: #6151f3;
+  --primary-dark: #4c3ce0;
+  --primary-soft: #edeafd;
+  --success-bg: #dcfce7;
+  --success-text: #15803d;
+  --danger-bg: #fee2e2;
+  --danger-text: #b91c1c;
+  --warn-bg: #fef3c7;
+  --warn-text: #92400e;
+  --info-bg: #dbeafe;
+  --info-text: #1e40af;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(20, 20, 43, 0.04), 0 8px 24px rgba(20, 20, 43, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin-top: 0; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 17px; display: flex; align-items: center; gap: 8px; }
+h3 { font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+p { line-height: 1.5; }
+
+/* ---------- Layout ---------- */
+/* Sidebar artık gizli bir "rail": varsayılan halde sadece ikonlar görünen dar bir
+   şerit, fare üzerine gelince (hover) tam genişliğine açılıp etiketleri gösteriyor.
+   Sayfa içeriğinin üzerine yüzer (position: fixed + overlay), bu yüzden açılırken
+   ana içerik yana kaymıyor/zıplamıyor — sayfa daha geniş ve odaklı kalıyor. */
+.app-layout { min-height: 100vh; }
+
+.sidebar {
+  width: var(--sidebar-rail, 60px);
+  background: linear-gradient(180deg, #1c1730 0%, #241d3f 100%);
+  color: #e6e4f5;
+  padding: 24px 10px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.16s ease;
+  box-shadow: 2px 0 12px rgba(0,0,0,0.08);
+}
+.sidebar:hover,
+.sidebar:focus-within {
+  width: 220px;
+}
+.sidebar-logo {
+  font-weight: 800;
+  font-size: 16px;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 24px 6px;
+  white-space: nowrap;
+}
+.sidebar nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.nav-link {
+  color: #c3bfe0;
+  text-decoration: none;
+  padding: 10px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-link:hover { background: rgba(255,255,255,0.08); color: white; }
+.nav-link.active { background: var(--primary); color: white; }
+.nav-label,
+.sidebar-logo .logo-text {
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.sidebar:hover .nav-label,
+.sidebar:hover .sidebar-logo .logo-text,
+.sidebar:focus-within .nav-label,
+.sidebar:focus-within .sidebar-logo .logo-text {
+  opacity: 1;
+  transition: opacity 0.2s ease 0.05s;
+}
+.sidebar-footer {
+  font-size: 12px;
+  color: #a9a4cc;
+  padding: 10px 10px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  margin-top: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.sidebar:hover .sidebar-footer,
+.sidebar:focus-within .sidebar-footer {
+  opacity: 1;
+  transition: opacity 0.2s ease 0.05s;
+}
+
+.main-content { min-width: 0; margin-left: var(--sidebar-rail, 60px); }
+.container { max-width: 1320px; margin: 0 auto; padding: 32px 28px 60px; }
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.page-header h1 { font-size: 24px; }
+.page-header p { color: var(--text-muted); font-size: 14px; margin: 4px 0 0; }
+
+/* ---------- API kredi paneli (sağ üst) ---------- */
+.credits-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  min-width: 240px;
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+}
+.credits-panel-title { font-weight: 700; font-size: 12px; margin-bottom: 6px; color: var(--text); }
+.credits-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.credits-row:last-child { border-bottom: none; }
+.credits-row .credits-label { color: var(--text-muted); }
+.credits-row .credits-value { font-weight: 700; text-align: right; }
+.credits-row .credits-value.warn { color: var(--danger-text); }
+.credits-row .credits-value.ok { color: var(--success-text); }
+.credits-row .credits-value.unknown { color: var(--text-muted); font-weight: 500; font-size: 11.5px; }
+
+/* ---------- Cards ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.card + .card { margin-top: 20px; }
+
+/* ---------- Forms ---------- */
+label { font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 4px; }
+input, textarea, select {
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fbfbfe;
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: white;
+}
+input:disabled { background: #f1f1f6; color: var(--text-muted); }
+
+/* ---------- Zengin metin (rich text) editörü ---------- */
+/* Mail gövdesi kutuları artık contenteditable — başka bir yerden (Word/Google
+   Docs/başka bir mail) kopyalayıp yapıştırdığında kalın/italik/liste gibi
+   biçimlendirme korunur, düz metin kutusunda olduğu gibi kaybolmaz. */
+.rte-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.rte-btn {
+  background: #eef0f6;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 11px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  min-width: 32px;
+  font-weight: 600;
+}
+.rte-btn:hover { background: #e2e4ee; }
+.rte-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+.rich-editor {
+  width: 100%;
+  min-height: 160px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fbfbfe;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-y: auto;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.rich-editor.small { min-height: 90px; }
+.rich-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+  background: white;
+}
+.rich-editor:empty:before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+}
+.rich-editor b, .rich-editor strong { font-weight: 700; }
+.rich-editor ul, .rich-editor ol { margin: 8px 0; padding-left: 22px; }
+
+/* ---------- Buttons ---------- */
+button {
+  background: var(--primary);
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+button:hover { background: var(--primary-dark); }
+button:active { transform: scale(0.98); }
+button.secondary { background: #eef0f6; color: var(--text); }
+button.secondary:hover { background: #e2e4ee; }
+button.small { padding: 6px 12px; font-size: 12px; border-radius: 8px; margin: 2px 2px 2px 0; }
+button:disabled { background: #d9dbe6; color: #9498ac; cursor: not-allowed; }
+
+/* ---------- Badges ---------- */
+.badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  display: inline-block;
+}
+.badge.found { background: var(--success-bg); color: var(--success-text); }
+.badge.not_found { background: var(--danger-bg); color: var(--danger-text); }
+.badge.pending { background: var(--warn-bg); color: var(--warn-text); }
+.badge.sent { background: var(--info-bg); color: var(--info-text); }
+.badge.error { background: var(--danger-bg); color: var(--danger-text); }
+.badge.duplicate_blocked { background: #ececf3; color: #4b4f66; }
+.badge.bounced { background: #fde68a; color: #92400e; }
+
+/* Sistem bir domain'i/e-maili "düşük güvenle" (yani markaya ait olduğundan tam emin
+   olamadan) seçtiğinde bunu tabloda açıkça göstermek için — böylece kullanıcı
+   göndermeden önce şüpheli eşleşmeleri fark edebilir. */
+.confidence-warn {
+  color: var(--danger-text);
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+/* ---------- Table ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th, td { text-align: left; padding: 10px 8px; vertical-align: top; }
+th {
+  color: var(--text-muted);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--border);
+}
+tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s ease; }
+tbody tr:hover { background: #fafaff; }
+tbody tr:last-child { border-bottom: none; }
+td input, td select {
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 13.5px;
+  min-width: 0;
+  width: 100%;
+  min-height: 20px;
+}
+td input[type="checkbox"] { min-width: 0; width: auto; padding: 0; }
+
+/* Sidebar rail'in açtığı ekstra genişliği kullanmak için: geniş kartlarda (marka
+   tablosu gibi) tablo sabit sütun genişlikleriyle taşar, içerik yatay kaydırma
+   olmadan sığar. İşlem butonları da kendi hücresi içinde alt satıra sarar. */
+#brandsTable { table-layout: fixed; }
+#brandsTable .actions-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+.card-wide { max-width: none; }
+
+/* ---------- Durum filtre sekmeleri ---------- */
+.filter-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-tab {
+  background: #eef0f6;
+  color: var(--text);
+  border: 1.5px solid transparent;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-tab:hover { background: #e2e4ee; }
+.filter-tab.active { background: var(--primary-soft); color: var(--primary-dark); border-color: var(--primary); }
+.filter-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+/* ---------- Misc ---------- */
+.status-line { font-size: 13px; font-weight: 600; }
+.ok { color: var(--success-text); }
+.warn { color: var(--danger-text); }
+.toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.muted { color: var(--text-muted); font-size: 13px; }
+hr.sep { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+/* ---------- Modal ---------- */
+.overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(20, 18, 40, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+.modal {
+  background: white; border-radius: 18px; padding: 28px;
+  width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+}
+
+/* ---------- Analytics stat cards ---------- */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+.stat-card {
+  background: linear-gradient(160deg, #fbfbff 0%, #f2f1fc 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+}
+.stat-number { font-size: 26px; font-weight: 800; color: var(--primary-dark); }
+.stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-weight: 500; }
+
+@media (max-width: 760px) {
+  /* Küçük ekranda hover diye bir şey olmadığı için rail/hover davranışı anlamsız —
+     eski davranışa dön: sabit, tam genişlikte, üstte yatay bir menü çubuğu. */
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: relative;
+    flex-direction: row;
+    align-items: center;
+    padding: 14px 16px;
+    overflow: visible;
+  }
+  .sidebar nav { flex-direction: row; overflow-x: auto; }
+  .nav-label, .sidebar-logo .logo-text { opacity: 1; }
+  .sidebar-footer { display: none; }
+  .main-content { margin-left: 0; }
+  .container { padding: 20px 16px 40px; }
+}

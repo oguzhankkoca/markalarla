@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>Marka Outreach Paneli</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">🚀 <span class="logo-text">Neofa Outreach</span></div>
+      <nav>
+        <a href="/index.html" class="nav-link active">📋 <span class="nav-label">Panel</span></a>
+        <a href="/tracking.html" class="nav-link">📬 <span class="nav-label">Gönderim Takibi</span></a>
+        <a href="/analytics.html" class="nav-link">📊 <span class="nav-label">Özet</span></a>
+      </nav>
+      <div class="sidebar-footer" id="emailStatus"></div>
+    </aside>
+
+    <div class="main-content">
+      <div class="container">
+
+        <div class="page-header">
+          <div>
+            <h1>Marka Outreach Paneli</h1>
+            <p>Marka listeni yükle, e-mailleri bul, şablonunu hazırla ve gönder.</p>
+          </div>
+          <div class="credits-panel" id="creditsPanel">
+            <div class="credits-panel-title">🔑 API Kredileri</div>
+            <div id="creditsBody" class="muted">Yükleniyor...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>1️⃣ Bilgilerin (mail imzası için)</h2>
+          <input type="text" id="settingsName" placeholder="Adın soyadın" />
+          <input type="text" id="settingsCompany" placeholder="Şirket adın" />
+          <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
+          <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
+          <button id="saveSettingsBtn" class="secondary">Kaydet</button>
+        </div>
+
+        <div class="card">
+          <h2>2️⃣ Marka listesi yükle (Excel/CSV)</h2>
+          <p class="muted">Dosyada marka adlarının olduğu bir sütun olmalı (örn: "Marka", "Brand"). İsteğe bağlı web sitesi sütunu da ekleyebilirsin.</p>
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+          <button id="uploadBtn">Yükle</button>
+          <span class="muted" id="uploadStatus"></span>
+        </div>
+
+        <div class="card">
+          <h2>3️⃣ E-mail bulma</h2>
+          <div class="toolbar">
+            <button id="findAllBtn">Tüm markalar için email ara</button>
+            <button id="stopFindAllBtn" class="secondary" disabled>Durdur</button>
+            <button id="resumeFindAllBtn" class="secondary" disabled>Devam Et</button>
+            <span class="muted" id="findStatus"></span>
+          </div>
+          <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt.</p>
+        </div>
+
+        <div class="card">
+          <h2>4️⃣ Mail şablonu</h2>
+          <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
+          <p class="muted" style="margin-top:-6px;">Başka bir yerden (Word, Google Docs, başka bir mail) kopyaladığın metni doğrudan aşağıya yapıştırabilirsin — kalın/italik/liste gibi biçimlendirme korunur.</p>
+          <div class="rte-toolbar" data-target="bodyInput">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="bodyInput" class="rich-editor" contenteditable="true" data-placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></div>
+          <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
+        </div>
+
+        <div class="card">
+          <h2>5️⃣ Günlük otomatik gönderim limiti (opsiyonel)</h2>
+          <p class="muted">
+            400 marka gibi büyük bir listeyi tek seferde göndermek yerine, günde en fazla
+            kaç mail gönderileceğini buradan sınırlayabilirsin. 0 bırakırsan otomatik
+            gönderim kapalı olur (sadece elle/seçerek gönderirsin). Bir sayı girersen,
+            sistem her gün o kadarını 08:00-20:00 (UTC) arasına yayarak kendiliğinden
+            gönderir — art arda patlatmadığı için spam'e düşme riski azalır.
+          </p>
+          <input type="number" id="dailyLimitInput" min="0" placeholder="Örn: 60" style="max-width:160px;" />
+          <button id="saveDailyLimitBtn" class="secondary">Kaydet</button>
+        </div>
+
+        <div class="card card-wide">
+          <h2>6️⃣ Markalar ve gönderim</h2>
+          <div class="toolbar">
+            <button id="sendSelectedBtn">Seçilenleri Gönder</button>
+            <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
+            <button id="dedupeBtn" class="secondary" title="Aynı marka birden fazla kez varsa tekilleştirir">Tekrarlananları Birleştir</button>
+            <span class="muted" id="selectedCount">0 marka seçili</span>
+            <span class="muted" id="sendStatus"></span>
+          </div>
+          <div class="filter-tabs" id="filterTabs">
+            <button class="filter-tab active" data-filter="all">Tümü <span class="filter-count" id="countAll">0</span></button>
+            <button class="filter-tab" data-filter="found">Bulunanlar <span class="filter-count" id="countFound">0</span></button>
+            <button class="filter-tab" data-filter="not_found">Bulunamayanlar <span class="filter-count" id="countNotFound">0</span></button>
+            <button class="filter-tab" data-filter="pending">Beklemede <span class="filter-count" id="countPending">0</span></button>
+            <button class="filter-tab" data-filter="contact_form">📩 İletişim Formu Olanlar <span class="filter-count" id="countContactForm">0</span></button>
+            <button class="filter-tab" data-filter="low_confidence">⚠️ Düşük Güven <span class="filter-count" id="countLowConfidence">0</span></button>
+          </div>
+          <p class="muted" style="margin-top:-4px;">Bir sekmeye tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm markalar otomatik seçilir (checkbox işaretlenir) — "Seçilenleri Gönder" ile direkt o gruba gönderebilirsin. ("⚠️ Düşük Güven" sekmesi güvenlik için otomatik seçim yapmaz — bunları gönderme, önce "Ara" ile tekrar arat ya da elle kontrol et.)</p>
+          <div style="overflow-x:auto;">
+          <table id="brandsTable">
+            <colgroup>
+              <col style="width:32px;" />
+              <col style="width:13%;" />
+              <col style="width:11%;" />
+              <col style="width:17%;" />
+              <col style="width:17%;" />
+              <col style="width:9%;" />
+              <col />
+            </colgroup>
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="selectAllCheckbox" /></th>
+                <th>Marka</th>
+                <th>Ciro / Skor</th>
+                <th>Website</th>
+                <th>E-mail</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="brandsBody"></tbody>
+          </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div id="previewOverlay" class="overlay" style="display:none;">
+    <div class="modal">
+      <h2 id="previewTitle">Mail Önizleme</h2>
+      <p class="muted">Göndermeden önce bu markaya özel metni düzenleyebilirsin.</p>
+      <label class="muted">Kime</label>
+      <input type="text" id="previewTo" disabled />
+      <label class="muted">Konu</label>
+      <input type="text" id="previewSubject" />
+      <label class="muted">İçerik</label>
+      <div class="rte-toolbar" data-target="previewBody">
+        <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+        <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+        <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+        <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+        <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+      </div>
+      <div id="previewBody" class="rich-editor" contenteditable="true"></div>
+      <div class="toolbar">
+        <button id="previewSendBtn">Gönder</button>
+        <button id="previewCancelBtn" class="secondary">İptal</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

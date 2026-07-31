@@ -1,0 +1,23 @@
+{
+  "name": "brand-outreach-single-user",
+  "version": "1.0.0",
+  "description": "Amazon marka listesi yukle, e-mail bul, tek tikla kendi Gmail hesabindan marka anlasmasi teklifi gonder (tek kullanicili, basit surum).",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "better-sqlite3": "^11.3.0",
+    "cheerio": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.1",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.14",
+    "xlsx": "^0.18.5"
+  }
+}

@@ -193,12 +193,22 @@ function cleanEmails(rawEmails, domain) {
 // bir "dinlenmeye al" bayrağı tutuyoruz. Süre dolunca otomatik tekrar dener.
 let serperRestUntil = 0;
 let serpApiRestUntil = 0;
-const QUOTA_KEYWORDS = ["run out", "quota", "exceeded", "limit", "no searches", "insufficient"];
+const QUOTA_KEYWORDS = ["run out", "quota", "exceeded", "no searches left", "insufficient credit", "insufficient balance", "out of credits"];
 
+// ÖNEMLİ: Bu kontrol SADECE API'nin kendi hata alanına (data.error / data.message /
+// data.statusMessage gibi) bakar — TÜM yanıtı (arama sonuçlarındaki başlık/özet
+// metinleri dahil) taramaz. Eskiden tüm JSON stringify edilip aranıyordu; bu da
+// "White House Historical Association" gibi bir arama sonucunun özetinde geçen
+// tamamen alakasız bir "limit" ya da "exceeded" kelimesi yüzünden BAŞARILI (HTTP 200,
+// gerçek sonuçlarla dolu) bir yanıtın bile yanlışlıkla "kota bitti" sanılmasına ve
+// Serper.dev/SerpAPI'nin bir saat boyunca gereksiz yere devre dışı kalmasına yol
+// açıyordu — kullanıcı panelde kotasının hâlâ dolu olduğunu görse bile.
 function isQuotaError(status, data) {
   if (status === 429 || status === 402) return true;
-  const text = JSON.stringify(data || "").toLowerCase();
-  return QUOTA_KEYWORDS.some((k) => text.includes(k));
+  if (!data || typeof data !== "object") return false;
+  const errorText = String(data.error || data.message || data.statusMessage || "").toLowerCase();
+  if (!errorText) return false;
+  return QUOTA_KEYWORDS.some((k) => errorText.includes(k));
 }
 
 // Bir arama sonuç listesinden (her provider {url, title, snippet} biçiminde ya da
@@ -408,11 +418,16 @@ async function searchViaSerpApi(brandName, trace, query) {
   }
 }
 
-// Ücretsiz fallback: DuckDuckGo HTML arama (bulut IP'lerinden çoğu zaman engellenir)
-async function searchViaDuckDuckGo(brandName, trace, query) {
+// Ücretsiz fallback: DuckDuckGo HTML arama (bulut IP'lerinden çoğu zaman engellenir).
+// Render gibi bulut sunuculardan DuckDuckGo'ya istek bazen 10 saniyede yanıt vermeyip
+// zaman aşımına uğrayabiliyor (geçici ağ yavaşlığı/rate limit) — bu yüzden biraz daha
+// uzun bir süre tanıyoruz ve bir kez daha deniyoruz; ikinci denemede de olmazsa vazgeçip
+// bir sonraki arama ifadesine/son çare domain tahminine geçiyoruz.
+async function searchViaDuckDuckGo(brandName, trace, query, attempt = 1) {
   try {
     const { data, status } = await httpClient.get("https://html.duckduckgo.com/html/", {
       params: { q: query },
+      timeout: 15000,
     });
     const $ = cheerio.load(data);
     const candidatesDdg = [];
@@ -447,6 +462,11 @@ async function searchViaDuckDuckGo(brandName, trace, query) {
     }
     return null;
   } catch (e) {
+    if (attempt < 2) {
+      trace.push(`DuckDuckGo istek hatası (${e.message}), kısa bir bekleme sonrası tekrar deneniyor...`);
+      await sleep(1500);
+      return searchViaDuckDuckGo(brandName, trace, query, attempt + 1);
+    }
     trace.push(`DuckDuckGo istek hatası: ${e.message}`);
     return null;
   }
@@ -472,23 +492,27 @@ async function findOfficialDomainViaSearch(brandName, trace) {
     if (viaDdg) return viaDdg;
   }
 
-  // 4) Son çare: marka adından direkt domain tahmini
+  // 4) Son çare: marka adından direkt domain tahmini. Sadece .com değil, dernek/vakıf
+  // gibi kâr amacı gütmeyen markalarda sık görülen .org ve .net'i de sırayla dene
+  // (ör. "White House Historical Association" gibi isimler genelde .org kullanır).
   const guess = brandName
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]/g, "");
   if (guess) {
-    const guessedDomain = `${guess}.com`;
-    try {
-      const { status } = await httpClient.get(`https://${guessedDomain}`, { timeout: 6000 });
-      if (status < 400) {
-        trace.push(`Tahmin edilen domain çalışıyor: ${guessedDomain}`);
-        return guessedDomain;
+    for (const tld of ["com", "org", "net"]) {
+      const guessedDomain = `${guess}.${tld}`;
+      try {
+        const { status } = await httpClient.get(`https://${guessedDomain}`, { timeout: 6000 });
+        if (status < 400) {
+          trace.push(`Tahmin edilen domain çalışıyor: ${guessedDomain}`);
+          return guessedDomain;
+        }
+        trace.push(`Tahmin edilen domain (${guessedDomain}) yanıt kodu: ${status}`);
+      } catch (e) {
+        trace.push(`Tahmin edilen domain (${guessedDomain}) ulaşılamadı: ${e.message}`);
       }
-      trace.push(`Tahmin edilen domain (${guessedDomain}) yanıt kodu: ${status}`);
-    } catch (e) {
-      trace.push(`Tahmin edilen domain (${guessedDomain}) ulaşılamadı: ${e.message}`);
     }
   }
 

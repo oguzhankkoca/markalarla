@@ -7,6 +7,7 @@ const settingsRoutes = require("./routes/settings");
 const brandRoutes = require("./routes/brands");
 const trackingRoutes = require("./routes/tracking");
 const analyticsRoutes = require("./routes/analytics");
+const creditsRoutes = require("./routes/credits");
 const mailer = require("./services/mailer");
 
 const app = express();
@@ -17,6 +18,7 @@ app.use(settingsRoutes);
 app.use(brandRoutes);
 app.use(trackingRoutes);
 app.use(analyticsRoutes);
+app.use(creditsRoutes);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.listen(PORT, () => {

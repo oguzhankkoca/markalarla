@@ -302,9 +302,19 @@ sağlayan bir sistem yoktur, göndermeden önce kontrol etme alışkanlığını
   API'lerden birine kota alman, sitesi genelde hiç e-mail yayınlamayan (sadece iletişim
   formu olan) markalarda e-mail bulma oranını artırmaz — sadece doğru siteyi bulma oranını
   artırır.
-- **Kota biterse**: hangi sağlayıcının kotası biterse (HTTP 429 ya da "kota bitti" hatası)
-  uygulama o sağlayıcıyı 1 saat boyunca atlayıp bir sonrakine geçer, böylece boşa istek
-  harcamaz. Kotalar genelde her ay sıfırlanır.
+- **Kota biterse**: hangi sağlayıcının kotası biterse (HTTP 429/402 ya da API'nin kendi
+  döndürdüğü "kota bitti" hata mesajı) uygulama o sağlayıcıyı 1 saat boyunca atlayıp bir
+  sonrakine geçer, böylece boşa istek harcamaz. Kotalar genelde her ay sıfırlanır.
+  (Önceki bir sürümde bu kontrol yanlışlıkla arama sonuçlarının başlık/özet metnindeki
+  sıradan kelimelere de bakıyordu — ör. "White House Historical Association" gibi bir
+  aramada sonuç metninde geçen alakasız bir "limit" kelimesi yüzünden kota hâlâ doluyken
+  bile sağlayıcı 1 saatliğine yanlışlıkla devre dışı bırakılabiliyordu. Bu düzeltildi:
+  artık sadece API'nin kendi hata alanına bakılıyor.)
+- **Panelin sağ üstündeki "API Kredileri" kutusu**: SerpAPI ve Hunter.io kendi resmi
+  "hesap" uç noktalarını sağladığı için kalan arama/istek sayısını gerçek zamanlı ve
+  doğru şekilde gösterir. Serper.dev ve Anthropic (Claude) API'lerinin ise kalan
+  kredi/bakiyeyi döndüren resmi bir uç noktası yok — bunlar için kutu "ilgili panelden
+  bak" der (serper.dev dashboard'u / console.anthropic.com), uydurma bir sayı göstermez.
 - **Gönderim limiti**: normal bir Gmail hesabının günlük gönderim limiti var (~500 mail/gün).
   Çok büyük listelerde bunu aşmamaya dikkat et. Uygulama gönderimler arasına 1.5 saniye
   bekleme koyar.

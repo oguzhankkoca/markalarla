@@ -554,9 +554,71 @@ previewOverlay.addEventListener("click", (e) => {
   if (e.target === previewOverlay) closePreview();
 });
 
+// Sağ üstteki "API Kredileri" kutusu: SerpAPI ve Hunter.io kendi resmi "hesap" uç
+// noktalarını sağladığı için gerçek kalan sayıyı gösterebiliyoruz. Serper.dev ve
+// Anthropic'in ise kalan krediyi döndüren bir API'si yok (sadece kendi panellerinde
+// görünüyor) — burada uydurma bir sayı göstermek yerine bunu açıkça belirtiyoruz.
+function creditsRow(label, valueText, cls) {
+  return `<div class="credits-row"><span class="credits-label">${label}</span><span class="credits-value ${cls || ""}">${valueText}</span></div>`;
+}
+
+async function loadCredits() {
+  const body = document.getElementById("creditsBody");
+  try {
+    const res = await fetch("/api/credits");
+    const data = await res.json();
+    if (!res.ok) {
+      body.innerHTML = `<span class="warn">Kredi bilgisi alınamadı.</span>`;
+      return;
+    }
+    const rows = [];
+
+    // SerpAPI
+    if (!data.serpapi.configured) {
+      rows.push(creditsRow("SerpAPI", "tanımlı değil", "unknown"));
+    } else if (!data.serpapi.ok) {
+      rows.push(creditsRow("SerpAPI", `okunamadı (${data.serpapi.error || "hata"})`, "unknown"));
+    } else {
+      const remaining = data.serpapi.remaining;
+      const cls = remaining !== null && remaining <= 20 ? "warn" : "ok";
+      rows.push(creditsRow("SerpAPI", remaining !== null ? `${remaining} arama kaldı` : "bilinmiyor", cls));
+    }
+
+    // Hunter.io
+    if (!data.hunter.configured) {
+      rows.push(creditsRow("Hunter.io", "tanımlı değil", "unknown"));
+    } else if (!data.hunter.ok) {
+      rows.push(creditsRow("Hunter.io", `okunamadı (${data.hunter.error || "hata"})`, "unknown"));
+    } else {
+      const available = data.hunter.available;
+      const cls = available !== null && available <= 10 ? "warn" : "ok";
+      rows.push(creditsRow("Hunter.io", available !== null ? `${available} kaldı` : "bilinmiyor", cls));
+    }
+
+    // Serper.dev — API'de kalan krediyi döndüren bir uç nokta yok, sadece dashboard'da var
+    if (!data.serper.configured) {
+      rows.push(creditsRow("Serper.dev", "tanımlı değil", "unknown"));
+    } else {
+      rows.push(creditsRow("Serper.dev", "serper.dev panelinden bak", "unknown"));
+    }
+
+    // Anthropic (Claude AI doğrulama) — aynı şekilde API'den bakiye okunamıyor
+    if (!data.anthropic.configured) {
+      rows.push(creditsRow("Claude AI", "tanımlı değil (opsiyonel)", "unknown"));
+    } else {
+      rows.push(creditsRow("Claude AI", "console.anthropic.com'dan bak", "unknown"));
+    }
+
+    body.innerHTML = rows.join("");
+  } catch (e) {
+    body.innerHTML = `<span class="warn">Kredi bilgisi alınamadı: ${e.message}</span>`;
+  }
+}
+
 wireRichTextToolbars();
 loadSettings();
 loadBrands();
+loadCredits();
 
 // Sayfa yenilenirse (arama devam ederken ya da duraklatılmışken), butonların ve
 // durumun doğru görünmesi için mevcut arama durumunu kontrol et.

@@ -623,6 +623,40 @@ kalan küçük bir kart beliriyor — hangi markanın işlendiğini, ilerleme ç
 "X/Y" sayacını gösteriyor. Sayfada aşağı kaydırsan bile bu kart yerinde kalır,
 işlem bitince "✓ Tamamlandı" yazıp birkaç saniye sonra kendiliğinden kayboluyor.
 
+## Amazon Mağaza Linki Butonu (v41)
+
+Excel'inde "Storefront Url" sütunu varsa, o marka için Amazon mağaza sayfası
+linki dolu demektir. Bu markaların satırında artık **"🛒 Amazon"** butonu görünür
+— tıklayınca markanın Amazon'daki mağaza sayfasını yeni sekmede açar, linki elle
+arayıp bulmana gerek kalmaz.
+
+## Toplu Gönderim/Arama Artık Sayfa Değiştirince Durmuyor (v42)
+
+Önceden "Seçilenleri Gönder", "Bulunan tüm e-maillere gönder" ve "Seçilenler
+için Email Ara" tarayıcıda çalışan bir döngüyle yürütülüyordu — bu yüzden
+gönderim ya da arama devam ederken Dashboard, Gönderim Takibi gibi başka bir
+sayfaya geçtiğinde işlem yarıda kesiliyordu. Artık bu üç işlem de "Tüm markalar
+için email ara" özelliğiyle aynı mantıkla **sunucuda arka planda** çalışıyor:
+istek gönderilir gönderilmez kuyruk sunucuda başlıyor ve tarayıcıdan tamamen
+bağımsız devam ediyor; panel sadece durumu birkaç saniyede bir sorup sağ üstteki
+ilerleme kartını ve durum metnini güncelliyor. Başka bir sayfaya geçip geri
+döndüğünde de devam eden işlemin ilerlemesi otomatik olarak tekrar görünür.
+Ayrıca toplu gönderim için de arama özelliğindekine benzer bir **"Gönderimi
+Durdur"** butonu eklendi (o anda gönderilmekte olan mail bitirilir, kalanlar
+iptal edilir).
+
+## "Yeni Yüklenen" İçinde Durum Alt-Sekmeleri (v43)
+
+"🆕 Yeni Yüklenen" sekmesinin yanına, aynı en son Excel yüklemesindeki
+markaları durumlarına göre ayıran 3 alt-sekme eklendi: **"🆕📤 Yeni
+Gönderildi"** (bu yüklemeden mail gönderilmiş markalar), **"🆕📧 Yeni
+Bulundu"** (e-maili bulunmuş ama henüz gönderilmemiş olanlar) ve **"🆕⏳ Yeni
+Bekliyor"** (henüz hiç aranmamış olanlar). Böylece yeni yüklediğin bir Excel
+üzerinde çalışırken hangi markalara zaten ulaştığını, hangilerinin gönderime
+hazır olduğunu ve hangilerinin arama beklediğini tek bakışta ayırt
+edebiliyorsun. İlgili durumda hiç marka yoksa o alt-sekme otomatik olarak
+gizlenir.
+
 ## Özet / Analitik
 
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim

@@ -165,6 +165,7 @@
           <div class="toolbar">
             <button id="sendSelectedBtn">Seçilenleri Gönder</button>
             <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
+            <button id="stopSendBatchBtn" class="secondary" disabled title="Devam eden toplu gönderimi durdurur">Gönderimi Durdur</button>
             <button id="findSelectedBtn" class="secondary" title="İşaretlediğin markalar için tek tek email arar">Seçilenler için Email Ara</button>
             <button id="dedupeBtn" class="secondary" title="Aynı marka birden fazla kez varsa tekilleştirir">Tekrarlananları Birleştir</button>
             <span class="muted" id="selectedCount">0 marka seçili</span>
@@ -174,6 +175,9 @@
           <div class="filter-tabs" id="filterTabs">
             <button class="filter-tab active" data-filter="all">Tümü <span class="filter-count" id="countAll">0</span></button>
             <button class="filter-tab" data-filter="new_upload" id="newUploadTab" title="En son yüklediğin Excel dosyasındaki markalar">🆕 Yeni Yüklenen <span class="filter-count" id="countNewUpload">0</span></button>
+            <button class="filter-tab" data-filter="new_sent" id="newSentTab" title="En son yüklediğin Excel'deki markalardan mail gönderilmiş olanlar">🆕📤 Yeni Gönderildi <span class="filter-count" id="countNewSent">0</span></button>
+            <button class="filter-tab" data-filter="new_found" id="newFoundTab" title="En son yüklediğin Excel'deki markalardan e-maili bulunmuş olanlar">🆕📧 Yeni Bulundu <span class="filter-count" id="countNewFound">0</span></button>
+            <button class="filter-tab" data-filter="new_pending" id="newPendingTab" title="En son yüklediğin Excel'deki markalardan henüz aranmamış olanlar">🆕⏳ Yeni Bekliyor <span class="filter-count" id="countNewPending">0</span></button>
             <button class="filter-tab" data-filter="found">Bulunanlar <span class="filter-count" id="countFound">0</span></button>
             <button class="filter-tab" data-filter="not_found">Bulunamayanlar <span class="filter-count" id="countNotFound">0</span></button>
             <button class="filter-tab" data-filter="pending">Beklemede <span class="filter-count" id="countPending">0</span></button>

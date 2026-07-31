@@ -116,6 +116,12 @@ function matchesFilter(b, filter) {
   // sekmelerin arasına "karışmış" olur (ayrı bir taşıma işlemi gerekmez, zaten
   // hepsi aynı tabloda).
   if (filter === "new_upload") return Boolean(batch) && b.batch === batch;
+  // "Yeni Yüklenen" grubunun durumuna göre alt kırılımları — aynı en son yükleme
+  // içinde hangi markalara zaten mail gitmiş, hangisinin e-maili bulunmuş, hangisi
+  // henüz hiç aranmamış olduğunu tek bakışta ayırt edebilmek için.
+  if (filter === "new_sent") return Boolean(batch) && b.batch === batch && b.status === "sent";
+  if (filter === "new_found") return Boolean(batch) && b.batch === batch && b.status === "found";
+  if (filter === "new_pending") return Boolean(batch) && b.batch === batch && b.status === "pending";
   if (filter === "found") return b.status === "found";
   // İletişim formu bulunan markalar (e-mail yok ama form var) burada değil, sadece
   // "İletişim Formu Olanlar" sekmesinde görünür — aynı marka iki sekmede birden
@@ -249,7 +255,20 @@ document.getElementById("nextPageBtn").addEventListener("click", () => {
 });
 
 function renderFilterTabs() {
-  const counts = { all: brands.length, new_upload: 0, found: 0, not_found: 0, pending: 0, contact_form: 0, low_confidence: 0, duplicate_blocked: 0, suppressed: 0 };
+  const counts = {
+    all: brands.length,
+    new_upload: 0,
+    new_sent: 0,
+    new_found: 0,
+    new_pending: 0,
+    found: 0,
+    not_found: 0,
+    pending: 0,
+    contact_form: 0,
+    low_confidence: 0,
+    duplicate_blocked: 0,
+    suppressed: 0,
+  };
   for (const b of brands) {
     if (b.status === "found") counts.found++;
     else if ((b.status === "not_found" || b.status === "error") && !hasContactFormOnly(b)) counts.not_found++;
@@ -258,7 +277,12 @@ function renderFilterTabs() {
     if (hasContactFormOnly(b)) counts.contact_form++;
     if (b.email && b.confidence === "low") counts.low_confidence++;
     if (b.suppressed) counts.suppressed++;
-    if (batch && b.batch === batch) counts.new_upload++;
+    if (batch && b.batch === batch) {
+      counts.new_upload++;
+      if (b.status === "sent") counts.new_sent++;
+      else if (b.status === "found") counts.new_found++;
+      else if (b.status === "pending") counts.new_pending++;
+    }
   }
   const setText = (id, n) => {
     const el = document.getElementById(id);
@@ -266,6 +290,9 @@ function renderFilterTabs() {
   };
   setText("countAll", counts.all);
   setText("countNewUpload", counts.new_upload);
+  setText("countNewSent", counts.new_sent);
+  setText("countNewFound", counts.new_found);
+  setText("countNewPending", counts.new_pending);
   setText("countFound", counts.found);
   setText("countNotFound", counts.not_found);
   setText("countPending", counts.pending);
@@ -279,10 +306,18 @@ function renderFilterTabs() {
 
   // "Yeni Yüklenen" sekmesi, hiç Excel yüklenmemişse (batch yok) ya da eski bir
   // veritabanından geliyorsa (batch_name/uploaded_at hiç dolmamışsa) gösterilmez —
-  // eski kayıtlarda bu sütunlar boş olabilir, o zaman sekme anlamsız kalır.
+  // eski kayıtlarda bu sütunlar boş olabilir, o zaman sekme anlamsız kalır. Aynı
+  // mantık, o batch'in durum bazlı alt-sekmeleri (Gönderildi/Bulundu/Bekliyor)
+  // için de geçerli — ilgili durumda hiç marka yoksa sekme gizlenir.
   const newUploadTab = document.getElementById("newUploadTab");
   const newUploadLabel = document.getElementById("newUploadLabel");
+  const newSentTab = document.getElementById("newSentTab");
+  const newFoundTab = document.getElementById("newFoundTab");
+  const newPendingTab = document.getElementById("newPendingTab");
   if (newUploadTab) newUploadTab.style.display = counts.new_upload > 0 ? "" : "none";
+  if (newSentTab) newSentTab.style.display = counts.new_sent > 0 ? "" : "none";
+  if (newFoundTab) newFoundTab.style.display = counts.new_found > 0 ? "" : "none";
+  if (newPendingTab) newPendingTab.style.display = counts.new_pending > 0 ? "" : "none";
   if (newUploadLabel) {
     if (counts.new_upload > 0 && latestBatchName) {
       const dateLabel = latestBatchUploadedAt
@@ -363,6 +398,11 @@ function renderBrands() {
               : ""
           }
           ${hasMarketData(b) ? `<button class="small secondary market-btn" data-id="${b.id}" title="Piyasa verisi">📊</button>` : ""}
+          ${
+            b.storefront_url
+              ? `<button class="small secondary amazon-btn" data-url="${b.storefront_url.replace(/"/g, "&quot;")}" title="Amazon mağaza sayfasını aç">🛒 Amazon</button>`
+              : ""
+          }
           <button class="small secondary detail-btn" data-id="${b.id}" title="Arama adımları detayı">Detay</button>
         </div>
       </td>
@@ -449,6 +489,20 @@ function attachRowEvents() {
       const brand = brands.find((b) => String(b.id) === btn.dataset.id);
       const steps = (brand.last_error || "Henüz aranmadı.").split(" | ").join("\n");
       alert(`${brand.name} için yapılan adımlar:\n\n${steps}`);
+    });
+  });
+
+  // Excel'deki "Storefront Url" sütunundan gelen Amazon mağaza sayfası linkini
+  // yeni sekmede açar — marka satırında ayrıca aramaya/kopyalamaya gerek kalmadan
+  // tek tıkla Amazon'daki mağazasına ulaşmak için.
+  document.querySelectorAll(".amazon-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      let url = btn.dataset.url;
+      if (!url) return;
+      // Excel'den gelen linkte protokol (https://) eksik olabilir — tarayıcı
+      // bunu göreli bir yol sanıp mevcut sayfa üzerinden açmaya çalışmasın diye.
+      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+      window.open(url, "_blank", "noopener");
     });
   });
 
@@ -666,13 +720,25 @@ function updateFindAllButtons(status) {
   document.getElementById("findAllBtn").disabled = status.running;
   document.getElementById("stopFindAllBtn").disabled = !status.running;
   document.getElementById("resumeFindAllBtn").disabled = status.running || status.remaining === 0;
+  const findSelectedBtn = document.getElementById("findSelectedBtn");
+  if (findSelectedBtn) findSelectedBtn.disabled = status.running;
 }
 
+// "Tüm markalar için ara" VE "Seçilenler için Email Ara" artık AYNI sunucu
+// kuyruğunu (findAllJob) paylaşıyor — ids gönderilirse sadece o markalar,
+// gönderilmezse tüm uygun markalar aranıyor. Bu yüzden ilerleme metni/toast'ı
+// da tek bir yerden (bu fonksiyon) güncelleniyor; hangi buton başlattıysa onun
+// durum metni de burada dolduruluyor.
 async function pollFindAllStatus() {
   await loadBrands();
   const res = await fetch("/api/brands/find-all/status");
   const status = await res.json();
   updateFindAllButtons(status);
+  const findSelectedStatusEl = document.getElementById("findSelectedStatus");
+  if (status.total > 0) {
+    updateProgressToast(status.processedCount, status.total, status.currentBrandName);
+    if (findSelectedStatusEl) findSelectedStatusEl.textContent = `${status.processedCount}/${status.total}`;
+  }
   if (!status.running) {
     clearInterval(findAllPollInterval);
     findAllPollInterval = null;
@@ -680,6 +746,10 @@ async function pollFindAllStatus() {
       status.remaining > 0
         ? `Duraklatıldı. ${status.remaining} marka kaldı — "Devam Et" ile devam edebilirsin.`
         : "Tamamlandı.";
+    if (findSelectedStatusEl && status.total > 0) {
+      findSelectedStatusEl.textContent = status.remaining > 0 ? "Duraklatıldı." : "Tamamlandı.";
+    }
+    if (status.total > 0) finishProgressToast(status.processedCount);
   } else {
     document.getElementById("findStatus").textContent = `Aranıyor... (${status.remaining} marka kaldı)`;
   }
@@ -696,6 +766,7 @@ document.getElementById("findAllBtn").addEventListener("click", async () => {
   const data = await res.json();
   if (!res.ok) return alert(data.error || "Başlatılamadı.");
   document.getElementById("findStatus").textContent = "Arama başladı, arka planda çalışıyor...";
+  showProgressToast(`🔍 Tüm Markalar İçin Email Arama (${data.queued})`);
   updateFindAllButtons({ running: true, remaining: data.queued });
   startFindAllPolling();
 });
@@ -711,6 +782,7 @@ document.getElementById("resumeFindAllBtn").addEventListener("click", async () =
   const data = await res.json();
   if (!res.ok) return alert(data.error);
   document.getElementById("findStatus").textContent = "Devam ediliyor...";
+  showProgressToast(`🔍 Email Arama (${data.remaining} kaldı)`);
   updateFindAllButtons({ running: true, remaining: data.remaining });
   startFindAllPolling();
 });
@@ -883,13 +955,55 @@ function finishProgressToast(doneCount) {
   }, 4000);
 }
 
+// Toplu gönderim artık TARAYICIDA bir döngü değil — sunucuda arka planda
+// (send-batch kuyruğu) çalışıyor, böylece "Dashboard" ya da başka bir sayfaya
+// geçilse bile gönderim durmadan devam ediyor. Burada sadece işi başlatıp
+// ardından durumu 3 saniyede bir sorguluyoruz.
+let sendBatchPollInterval = null;
+
+function updateSendBatchButtons(running) {
+  document.getElementById("sendSelectedBtn").disabled = running;
+  document.getElementById("sendAllBtn").disabled = running;
+  document.getElementById("stopSendBatchBtn").disabled = !running;
+}
+
+async function pollSendBatchStatus() {
+  const res = await fetch("/api/brands/send-batch/status");
+  const status = await res.json();
+  updateSendBatchButtons(status.running);
+  if (status.total > 0) {
+    const done = status.sentCount + status.failedCount;
+    document.getElementById("sendStatus").textContent = `${done}/${status.total}`;
+    updateProgressToast(done, status.total, status.currentBrandName);
+  }
+  if (!status.running) {
+    clearInterval(sendBatchPollInterval);
+    sendBatchPollInterval = null;
+    if (status.total > 0) {
+      document.getElementById("sendStatus").textContent =
+        status.failedCount > 0
+          ? `Tamamlandı: ${status.sentCount} gönderildi, ${status.failedCount} başarısız.`
+          : "Tamamlandı.";
+      finishProgressToast(status.sentCount + status.failedCount);
+    }
+    await loadBrands();
+  }
+}
+
+function startSendBatchPolling() {
+  if (sendBatchPollInterval) clearInterval(sendBatchPollInterval);
+  sendBatchPollInterval = setInterval(pollSendBatchStatus, 3000);
+}
+
 async function sendBatch(targets) {
   if (targets.length === 0) return alert("Gönderilecek e-mail yok.");
 
   // Göndermeden hemen önce ŞU AN kullanılan şablonu tekrar kontrol et — kullanıcı
   // şablonu kaydettikten sonra elle değiştirip tekrar kaydetmeden gönderebilir,
   // bu yüzden sadece "Şablonu kaydet" anında değil, gönderim anında da uyarıyoruz.
-  const triggers = checkSpamTriggers(subjectInput.value, richTextToPlain(bodyInput.innerHTML));
+  const rawSubject = subjectInput.value;
+  const rawBody = bodyInput.innerHTML;
+  const triggers = checkSpamTriggers(rawSubject, richTextToPlain(rawBody));
   if (triggers.length > 0) {
     const proceed = confirm(
       `Göndereceğin mail şablonunda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\n` +
@@ -899,58 +1013,45 @@ async function sendBatch(targets) {
   }
 
   if (!confirm(`${targets.length} markaya mail gönderilecek. Onaylıyor musun?`)) return;
-  document.getElementById("sendStatus").textContent = `0/${targets.length}`;
-  showProgressToast(`📤 Toplu Gönderim (${targets.length})`);
-  let done = 0;
-  for (const b of targets) {
-    updateProgressToast(done, targets.length, b.name);
-    await sendToBrand(b.id);
-    done++;
-    document.getElementById("sendStatus").textContent = `${done}/${targets.length}`;
-    updateProgressToast(done, targets.length, b.name);
-    // Her mail arasında SABİT bir süre beklemek yerine rastgele bir aralık (2-5 sn)
-    // kullanıyoruz — art arda tamamen düzenli aralıklarla giden mailler otomasyon
-    // gibi göründüğü için bazı spam filtrelerinde şüphe uyandırabilir; insan eliyle
-    // gönderiliyormuş gibi rastgele bir ritim, gönderici itibarını korumaya yardımcı olur.
-    const jitter = 2000 + Math.floor(Math.random() * 3000);
-    await new Promise((r) => setTimeout(r, jitter));
-  }
-  document.getElementById("sendStatus").textContent = "Tamamlandı.";
-  finishProgressToast(done);
+
+  const res = await fetch("/api/brands/send-batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: targets.map((b) => b.id), subject: rawSubject, body: rawBody }),
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || "Başlatılamadı.");
+  document.getElementById("sendStatus").textContent = `0/${data.queued}`;
+  showProgressToast(`📤 Toplu Gönderim (${data.queued})`);
+  updateSendBatchButtons(true);
+  startSendBatchPolling();
 }
 
-// İşaretlediğin (checkbox) markalar için tek tek email arama başlatır — "Tüm
-// markalar için email ara" tüm listeyi tararken, bu sadece seçtiklerini hedefler
-// (ör. "Bulunamayanlar" sekmesinden birkaçını işaretleyip sadece onları tekrar
-// aratmak istediğinde). Mevcut tekli "Ara" butonuyla aynı endpoint'i kullanır,
-// sadece sırayla ve ilerleme göstererek birden fazlasını art arda çağırır.
+document.getElementById("stopSendBatchBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/brands/send-batch/stop", { method: "POST" });
+  const data = await res.json();
+  document.getElementById("sendStatus").textContent = `Durduruluyor... (${data.remaining} marka kaldı)`;
+});
+
+// İşaretlediğin (checkbox) markalar için email arama başlatır — "Tüm markalar
+// için email ara" tüm listeyi tararken, bu sadece seçtiklerini hedefler (ör.
+// "Bulunamayanlar" sekmesinden birkaçını işaretleyip sadece onları tekrar
+// aratmak istediğinde). Artık tekli endpoint'i tarayıcıda döngüyle çağırmak
+// yerine, "Tüm markalar için ara" ile AYNI sunucu kuyruğunu (find-all) belirli
+// ID'lerle başlatıyor — böylece bu da sayfa değişince durmuyor.
 async function findEmailBatch(targets) {
   if (targets.length === 0) return alert("Önce tablodan en az bir marka seç (checkbox).");
-  const statusEl = document.getElementById("findSelectedStatus");
-  statusEl.textContent = `0/${targets.length}`;
-  showProgressToast(`🔍 Email Arama (${targets.length})`);
-  let done = 0;
-  for (const b of targets) {
-    updateProgressToast(done, targets.length, b.name);
-    try {
-      const res = await fetch(`/api/brands/${b.id}/find-email`, { method: "POST" });
-      const data = await res.json();
-      if (data.brand) {
-        const idx = brands.findIndex((x) => x.id === data.brand.id);
-        if (idx !== -1) brands[idx] = data.brand;
-      }
-    } catch (e) {
-      // Bir markada hata olsa bile diğerlerini aramaya devam et.
-    }
-    done++;
-    statusEl.textContent = `${done}/${targets.length}`;
-    updateProgressToast(done, targets.length, b.name);
-    renderBrands();
-    // Art arda çok hızlı istek atmamak için markalar arasına kısa bir bekleme.
-    await new Promise((r) => setTimeout(r, 800));
-  }
-  statusEl.textContent = "Tamamlandı.";
-  finishProgressToast(done);
+  const res = await fetch("/api/brands/find-all", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: targets.map((b) => b.id) }),
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || "Başlatılamadı.");
+  document.getElementById("findSelectedStatus").textContent = `0/${data.queued}`;
+  showProgressToast(`🔍 Email Arama (${data.queued})`);
+  updateFindAllButtons({ running: true, remaining: data.queued });
+  startFindAllPolling();
 }
 
 document.getElementById("findSelectedBtn").addEventListener("click", () => {
@@ -1260,9 +1361,30 @@ loadSuppressionList();
     updateFindAllButtons(status);
     if (status.running) {
       document.getElementById("findStatus").textContent = `Aranıyor... (${status.remaining} marka kaldı)`;
+      if (status.total > 0) showProgressToast(`🔍 Email Arama (${status.total})`);
       startFindAllPolling();
     } else if (status.remaining > 0) {
       document.getElementById("findStatus").textContent = `Duraklatıldı. ${status.remaining} marka kaldı — "Devam Et" ile devam edebilirsin.`;
+    }
+  } catch (e) {
+    // sessizce geç, kritik değil
+  }
+})();
+
+// Sayfa değiştirip geri dönüldüğünde ("Dashboard"a bakıp tekrar "Marka Keşif"e
+// gelmek gibi) devam eden bir toplu gönderim varsa, ilerleme kartını ve durum
+// yazısını kaldığı yerden göstermeye devam etsin diye aynı kontrolü gönderim
+// kuyruğu için de yapıyoruz.
+(async () => {
+  try {
+    const res = await fetch("/api/brands/send-batch/status");
+    const status = await res.json();
+    updateSendBatchButtons(status.running);
+    if (status.running) {
+      const done = status.sentCount + status.failedCount;
+      document.getElementById("sendStatus").textContent = `${done}/${status.total}`;
+      showProgressToast(`📤 Toplu Gönderim (${status.total})`);
+      startSendBatchPolling();
     }
   } catch (e) {
     // sessizce geç, kritik değil

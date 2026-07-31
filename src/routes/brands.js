@@ -394,7 +394,7 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
 // zaten aranmış olanlar status'u sayesinde otomatik atlanır). "Durdur" bir sonraki
 // markaya geçmeden önce işlemi durdurur, kalan markaları kuyrukta bırakır; "Devam Et"
 // kaldığı markadan itibaren aynı kuyruğu tüketmeye devam eder.
-let findAllJob = { batch: null, remainingIds: [], running: false };
+let findAllJob = { batch: null, remainingIds: [], running: false, total: 0, processedCount: 0, currentBrandName: null };
 
 async function processFindAllQueue() {
   findAllJob.running = true;
@@ -402,6 +402,7 @@ async function processFindAllQueue() {
     const id = findAllJob.remainingIds.shift();
     const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(id);
     if (!brand) continue;
+    findAllJob.currentBrandName = brand.name;
     try {
       const result = await findBrandEmail(brand.name, brand.website, {
         mainCategory: brand.main_category,
@@ -436,8 +437,10 @@ async function processFindAllQueue() {
         brand.id
       );
     }
+    findAllJob.processedCount++;
   }
   findAllJob.running = false;
+  findAllJob.currentBrandName = null;
 }
 
 // Tüm liste için toplu email arama (arka planda sırayla, durdurulabilir/devam
@@ -447,16 +450,35 @@ async function processFindAllQueue() {
 // tekrar aratmak istersen tablodaki "Ara" butonunu kullanabilirsin.
 // Panel artık tek bir birleşik marka listesi gösterdiği için (bkz. GET /api/brands),
 // bu da tek bir yükleme/batch ile sınırlı değil — sistemdeki tüm uygun markaları kapsar.
+// "ids" gönderilirse (örn. "Seçilenler için Email Ara" butonu), sadece o
+// markalar aranır — statüsü ne olursa olsun. Gönderilmezse eski davranış
+// (pending/not_found/error olan tüm markalar) korunur. Bu sayede seçili
+// markalar için arama da, tüm liste araması gibi, sunucuda arka planda
+// çalışır ve başka bir sayfaya geçilse bile durmaz.
 router.post("/api/brands/find-all", async (req, res) => {
   if (findAllJob.running) {
     return res.status(409).json({ error: "Zaten devam eden bir arama var. Önce durdur ya da bitmesini bekle." });
   }
-  const brands = db
-    .prepare("SELECT id FROM brands WHERE status IN ('pending', 'not_found', 'error')")
-    .all();
+  const { ids } = req.body || {};
+  let targetIds;
+  if (Array.isArray(ids) && ids.length > 0) {
+    targetIds = ids;
+  } else {
+    const brands = db
+      .prepare("SELECT id FROM brands WHERE status IN ('pending', 'not_found', 'error')")
+      .all();
+    targetIds = brands.map((b) => b.id);
+  }
 
-  findAllJob = { batch: null, remainingIds: brands.map((b) => b.id), running: false };
-  res.json({ ok: true, queued: brands.length });
+  findAllJob = {
+    batch: null,
+    remainingIds: targetIds.slice(),
+    running: false,
+    total: targetIds.length,
+    processedCount: 0,
+    currentBrandName: null,
+  };
+  res.json({ ok: true, queued: targetIds.length });
   processFindAllQueue();
 });
 
@@ -485,6 +507,9 @@ router.get("/api/brands/find-all/status", (req, res) => {
     running: findAllJob.running,
     remaining: findAllJob.remainingIds.length,
     batch: findAllJob.batch,
+    total: findAllJob.total,
+    processedCount: findAllJob.processedCount,
+    currentBrandName: findAllJob.currentBrandName,
   });
 });
 
@@ -699,6 +724,132 @@ async function runAutoSend() {
     return { sent: 0, reason: "error", error: err.message };
   }
 }
+
+// Toplu gönderim (seçilenler / bulunan tüm e-maillere) artık TARAYICIDA bir döngü
+// olarak değil, sunucuda (find-all aramasıyla aynı desende) arka planda çalışıyor.
+// Eskiden tarayıcının sekmesi kapatılınca ya da başka bir sayfaya (Dashboard,
+// Gönderim Takibi vb.) geçilince bu döngü de HTTP bağlantısıyla birlikte kesiliyor,
+// yani gönderim yarıda kalıyordu — kullanıcı başka sekmeye geçtiğinde işlemin
+// durmasının asıl sebebi buydu. Artık istek gönderilir gönderilmez (kuyruk
+// başlatılıp yanıt hemen dönülür) işlem sunucu tarafında, tarayıcıdan tamamen
+// bağımsız devam ediyor; panel sadece durumu periyodik olarak (polling) sorup
+// ilerlemeyi gösteriyor.
+let sendJob = {
+  remainingIds: [],
+  running: false,
+  subject: "",
+  body: "",
+  total: 0,
+  sentCount: 0,
+  failedCount: 0,
+  currentBrandName: null,
+};
+
+async function processSendQueue() {
+  sendJob.running = true;
+  while (sendJob.remainingIds.length > 0 && sendJob.running) {
+    const id = sendJob.remainingIds.shift();
+    const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(id);
+    sendJob.currentBrandName = brand ? brand.name : null;
+    if (!brand || !brand.email) {
+      sendJob.failedCount++;
+      continue;
+    }
+    // Tekli gönderim rotasındakiyle (POST /api/brands/:id/send) BİREBİR aynı
+    // korumalar — kalıcı "bir daha yazma" listesi ve çapraz marka tekrar koruması
+    // toplu gönderimde de atlanmaz.
+    if (isSuppressed(brand.email)) {
+      sendJob.failedCount++;
+      continue;
+    }
+    const owner = findEmailOwner(brand.email, brand.id);
+    if (owner) {
+      sendJob.failedCount++;
+      continue;
+    }
+    const subject = fillTemplateLocal(sendJob.subject, brand.name);
+    const body = fillTemplateLocal(sendJob.body, brand.name);
+    try {
+      await mailer.sendMail({ to: brand.email, subject, body });
+      db.prepare(
+        `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+      ).run(brand.id);
+      db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
+        brand.id,
+        `${brand.email} adresine gönderildi (toplu gönderim).`
+      );
+      sendJob.sentCount++;
+    } catch (err) {
+      db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'error', ?)").run(
+        brand.id,
+        err.message
+      );
+      sendJob.failedCount++;
+    }
+    // Aynı gönderim ritmi mantığı (rastgele 2-5 sn) — art arda tamamen düzenli
+    // aralıklarla giden mailler otomasyon gibi göründüğü için spam filtrelerinde
+    // şüphe uyandırabilir. Artık tarayıcıda değil, burada (sunucuda) uygulanıyor.
+    if (sendJob.remainingIds.length > 0 && sendJob.running) {
+      const jitter = 2000 + Math.floor(Math.random() * 3000);
+      await new Promise((r) => setTimeout(r, jitter));
+    }
+  }
+  sendJob.running = false;
+  sendJob.currentBrandName = null;
+}
+
+// Seçilen (ya da "bulunan tüm e-mailler") marka ID'lerine, sabit bir şablonla
+// (subject/body — {{marka}} her marka için ayrı ayrı doldurulur) toplu gönderim
+// başlatır. İstek anında kuyruğu kurup HEMEN yanıt döner, gerçek gönderim
+// arka planda (processSendQueue) devam eder.
+router.post("/api/brands/send-batch", (req, res) => {
+  if (sendJob.running) {
+    return res.status(409).json({ error: "Zaten devam eden bir toplu gönderim var. Önce durdur ya da bitmesini bekle." });
+  }
+  const { ids, subject, body } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: "Gönderilecek marka listesi boş." });
+  }
+  if (!subject || !body) {
+    return res.status(400).json({ error: "Mail konusu/içeriği boş olamaz." });
+  }
+  sendJob = {
+    remainingIds: ids.slice(),
+    running: false,
+    subject,
+    body,
+    total: ids.length,
+    sentCount: 0,
+    failedCount: 0,
+    currentBrandName: null,
+  };
+  res.json({ ok: true, queued: ids.length });
+  processSendQueue();
+});
+
+// Devam eden toplu gönderimi durdurur (o an gönderilmekte olan mail bitirilir,
+// bir sonrakine geçilmez). Kalan markalar kuyrukta bekletilmez, iptal edilir —
+// gönderim, tekli aramadan farklı olarak "kaldığı yerden devam et" desteklemiyor
+// çünkü şablon (subject/body) o oturuma özgüydü.
+router.post("/api/brands/send-batch/stop", (req, res) => {
+  sendJob.running = false;
+  const remaining = sendJob.remainingIds.length;
+  sendJob.remainingIds = [];
+  res.json({ ok: true, remaining });
+});
+
+// Panelin ilerleme kartını (sağ üst) ve butonlarını güncellemesi için periyodik
+// olarak sorguladığı durum uç noktası.
+router.get("/api/brands/send-batch/status", (req, res) => {
+  res.json({
+    running: sendJob.running,
+    remaining: sendJob.remainingIds.length,
+    total: sendJob.total,
+    sentCount: sendJob.sentCount,
+    failedCount: sendJob.failedCount,
+    currentBrandName: sendJob.currentBrandName,
+  });
+});
 
 module.exports = router;
 module.exports.runAutoSend = runAutoSend;

@@ -167,6 +167,7 @@
             <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
             <button id="stopSendBatchBtn" class="secondary" disabled title="Devam eden toplu gönderimi durdurur">Gönderimi Durdur</button>
             <button id="findSelectedBtn" class="secondary" title="İşaretlediğin markalar için tek tek email arar">Seçilenler için Email Ara</button>
+            <button id="stopFindSelectedBtn" class="secondary" disabled title="Devam eden email aramasını durdurur">Aramayı Durdur</button>
             <button id="dedupeBtn" class="secondary" title="Aynı marka birden fazla kez varsa tekilleştirir">Tekrarlananları Birleştir</button>
             <span class="muted" id="selectedCount">0 marka seçili</span>
             <span class="muted" id="sendStatus"></span>
@@ -277,6 +278,7 @@
     </div>
   </div>
 
+  <script src="/js/jobStatusToast.js"></script>
   <script src="/js/app.js"></script>
   <script src="/js/navBadge.js"></script>
 </body>

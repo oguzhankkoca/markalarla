@@ -722,6 +722,11 @@ function updateFindAllButtons(status) {
   document.getElementById("resumeFindAllBtn").disabled = status.running || status.remaining === 0;
   const findSelectedBtn = document.getElementById("findSelectedBtn");
   if (findSelectedBtn) findSelectedBtn.disabled = status.running;
+  // "Tüm markalar için ara" ve "Seçilenler için Email Ara" aynı sunucu kuyruğunu
+  // paylaştığı için, "Aramayı Durdur" butonu da hangisi başlatmış olursa olsun
+  // devam eden aramayı durdurabiliyor.
+  const stopFindSelectedBtn = document.getElementById("stopFindSelectedBtn");
+  if (stopFindSelectedBtn) stopFindSelectedBtn.disabled = !status.running;
 }
 
 // "Tüm markalar için ara" VE "Seçilenler için Email Ara" artık AYNI sunucu
@@ -921,39 +926,11 @@ function sortByValue(list) {
   });
 }
 
-// Sağ üstte sabit kalan ilerleme kartı — toplu gönderim ya da toplu email arama
-// sırasında kullanıcı sayfanın neresinde olursa olsun ne kadar ilerlendiğini
-// görebilsin diye. Aynı kart her iki işlem için de (başlık değiştirilerek)
-// tekrar kullanılıyor.
-function showProgressToast(title) {
-  const el = document.getElementById("progressToast");
-  el.classList.remove("done");
-  document.getElementById("progressToastTitle").textContent = title;
-  document.getElementById("progressToastSub").textContent = "";
-  document.getElementById("progressToastFill").style.width = "0%";
-  document.getElementById("progressToastCount").textContent = "0/0";
-  el.style.display = "";
-}
-
-function updateProgressToast(done, total, currentName) {
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  document.getElementById("progressToastSub").textContent = currentName
-    ? `İşleniyor: ${currentName}`
-    : "";
-  document.getElementById("progressToastFill").style.width = `${pct}%`;
-  document.getElementById("progressToastCount").textContent = `${done}/${total}`;
-}
-
-function finishProgressToast(doneCount) {
-  const el = document.getElementById("progressToast");
-  el.classList.add("done");
-  document.getElementById("progressToastSub").textContent = `✓ ${doneCount} tamamlandı`;
-  document.getElementById("progressToastFill").style.width = "100%";
-  // Birkaç saniye "tamamlandı" olarak görünür kalsın, sonra kendiliğinden kaybolsun.
-  setTimeout(() => {
-    el.style.display = "none";
-  }, 4000);
-}
+// Sağ üstte sabit kalan ilerleme kartı (showProgressToast/updateProgressToast/
+// finishProgressToast) artık TÜM sayfalarda (Marka Keşif, Dashboard, Gönderim
+// Takibi) ortak yüklenen public/js/jobStatusToast.js dosyasında tanımlı —
+// böylece başka bir sayfaya geçtiğinde de kart görünmeye devam ediyor. Burada
+// sadece o global fonksiyonları çağırıyoruz.
 
 // Toplu gönderim artık TARAYICIDA bir döngü değil — sunucuda arka planda
 // (send-batch kuyruğu) çalışıyor, böylece "Dashboard" ya da başka bir sayfaya
@@ -1057,6 +1034,16 @@ async function findEmailBatch(targets) {
 document.getElementById("findSelectedBtn").addEventListener("click", () => {
   const targets = brands.filter((b) => selectedIds.has(String(b.id)));
   findEmailBatch(targets);
+});
+
+// "Seçilenler için Email Ara" ile "Tüm markalar için ara" aynı sunucu kuyruğunu
+// (findAllJob) paylaşıyor, bu yüzden bu buton da aynı /stop uç noktasını çağırır
+// — hangisi başlatmış olursa olsun devam eden aramayı durdurur.
+document.getElementById("stopFindSelectedBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/brands/find-all/stop", { method: "POST" });
+  const data = await res.json();
+  document.getElementById("findSelectedStatus").textContent = `Durduruluyor... (${data.remaining} marka kaldı)`;
+  document.getElementById("findStatus").textContent = `Durduruluyor... (${data.remaining} marka kaldı)`;
 });
 
 document.getElementById("sendAllBtn").addEventListener("click", () => {

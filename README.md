@@ -657,6 +657,19 @@ hazır olduğunu ve hangilerinin arama beklediğini tek bakışta ayırt
 edebiliyorsun. İlgili durumda hiç marka yoksa o alt-sekme otomatik olarak
 gizlenir.
 
+## İlerleme Kartı Artık Her Sayfada Görünüyor + Seçilenler İçin Ayrı Durdur (v44)
+
+Sağ üstteki ilerleme kartı (toplu gönderim/email arama) önceden sadece "Marka
+Keşif" sayfasında görünüyordu — Dashboard ya da Gönderim Takibi'ne geçince
+kaybolduğu için işlemin durup durmadığını anlamak zordu. Artık bu kart
+**her üç sayfada da** (Marka Keşif, Dashboard, Gönderim Takibi) görünüyor ve
+birkaç saniyede bir güncelleniyor; işlem sunucuda zaten arka planda çalıştığı
+için, hangi sayfada olursan ol ilerlemeyi görebiliyorsun ve sayfa değiştirip
+geri döndüğünde de kaldığı yerden devam ediyor (sıfırlanmıyor). Ayrıca
+"Seçilenler için Email Ara" butonunun yanına ayrı bir **"Aramayı Durdur"**
+butonu eklendi — artık toplu gönderimde olduğu gibi seçilen markalar için
+başlattığın aramayı da istediğin an durdurabilirsin.
+
 ## Özet / Analitik
 
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim

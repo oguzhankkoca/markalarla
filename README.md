@@ -70,6 +70,12 @@ başlayabilirsin, bundan sonrası kalıcı olacak.
 
 ## Kullanım
 
+Soldaki menü artık ince, ikon-only bir şerit — üzerine fare götürünce genişleyip
+etiketleri gösteriyor, ayrılınca tekrar daralıyor. Amaç sayfada markalar tablosuna
+daha fazla yer açmak. Tablo da artık sabit sütun genişlikleriyle sayfaya sığacak
+şekilde tasarlandı; "Seçilenleri Gönder" butonunun yanında kaç markanın checkbox'la
+işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
+
 1. **Bilgilerin**: adın, şirketin, teklifin ve imzanı gir, "Kaydet"e bas (mail şablonu
    otomatik bunları kullanır).
 2. **Marka listesi yükle**: Excel/CSV dosyanı seç, "Yükle"ye bas. Dosyada marka adlarının
@@ -184,14 +190,20 @@ filtreleme/sıralama yapmaz — hangi markalara öncelik vereceğine sen karar v
 
 ## Tekrar yükleme / kara liste koruması
 
-Aynı marka adını (büyük/küçük harf ve boşluk farkı önemli değil) tekrar bir Excel'de
-yüklersen sistem otomatik kontrol eder:
+Panel artık ayrı ayrı "yüklemeler" değil, **tek ve birleşik bir marka listesi** gösterir.
+Aynı marka adını (büyük/küçük harf ve boşluk farkı önemli değil) daha önce herhangi bir
+Excel'de sisteme girmişsen, sonraki bir yüklemede o marka tekrar karşına çıksa bile
+**satır ikinci kez eklenmez** — sistem onu otomatik atlar, böylece örtüşen SmartScout
+export'larını art arda yüklesen bile markalar tabloda/metriklerde çift sayılmaz.
+Yükleme bittiğinde "X yeni marka eklendi, Y tanesi sistemde zaten kayıtlı olduğu için
+tekrar eklenmedi" mesajını görürsün.
 
-- Bu marka **daha önce gönderilmiş**, **olumsuz yanıt vermiş** ya da **"Reddedildi"** olarak
-  işaretlenmişse: yeni satır **"Tekrar (Engellendi)"** durumunda eklenir, otomatik
-  arama/gönderimden hariç tutulur (istersen tabloda elle düzenleyip yine de işlem yapabilirsin).
-- Daha önce sadece e-mail'i bulunmuş ama gönderilmemişse: aynı e-mail otomatik olarak yeni
-  satıra da kopyalanır, tekrar aramaya gerek kalmaz.
+Bu markanın durumu ne olursa olsun (bekliyor, bulundu, gönderildi, olumsuz yanıt,
+reddedildi) fark etmez — bir kere sisteme girdiyse bir daha eklenmez; zaten var olan
+kaydı tabloda görüp elle düzenleyebilir, e-mailini güncelleyebilir ya da durumunu
+değiştirebilirsin. "Tüm markalar için email ara" ve gönderim de artık tek bir
+yüklemeyle sınırlı değil, sistemdeki tüm uygun markaları (bekleyen/bulunamamış)
+kapsar.
 
 ## Özet / Analitik
 

@@ -88,9 +88,6 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
     const enrichmentFieldsFound = Object.keys(enrichmentMap);
 
     const batch = crypto.randomUUID();
-    const findExisting = db.prepare(
-      "SELECT * FROM brands WHERE name_normalized = ? ORDER BY id DESC LIMIT 1"
-    );
     const insert = db.prepare(
       `INSERT INTO brands (
          batch, name, name_normalized, website, email, email_source, confidence, status, last_error,
@@ -101,52 +98,34 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
-    let duplicateBlockedCount = 0;
-    let reusedEmailCount = 0;
+    // Marka adı (normalize edilmiş) sistemde herhangi bir yüklemede/batch'te zaten
+    // varsa bu satırı tekrar eklemiyoruz — aynı SmartScout listesini ya da örtüşen
+    // Excel'leri tekrar tekrar yüklediğinde markalar metriklerde/tabloda çift
+    // sayılmasın diye. Aynı dosya içindeki tekrarları da (iki kez aynı marka) aynı
+    // mantıkla engelliyoruz.
+    const existingNames = new Set(
+      db.prepare("SELECT DISTINCT name_normalized FROM brands").all().map((r) => r.name_normalized)
+    );
+
+    let skippedExistingCount = 0;
 
     const insertMany = db.transaction((items) => {
       for (const item of items) {
         const name = String(item[nameKey] || "").trim();
         if (!name) continue;
         const nameNorm = name.toLowerCase();
-        let website = websiteKey ? String(item[websiteKey] || "").trim() : "";
 
-        const existing = findExisting.get(nameNorm);
+        if (existingNames.has(nameNorm)) {
+          skippedExistingCount++;
+          continue;
+        }
+        existingNames.add(nameNorm);
+
+        const website = websiteKey ? String(item[websiteKey] || "").trim() : "";
         const enrichment = extractEnrichment(item, enrichmentMap);
 
-        let status = "pending";
-        let email = null;
-        let emailSource = null;
-        let confidence = "unknown";
-        let lastError = null;
-
-        if (existing) {
-          if (!website && existing.website) website = existing.website;
-
-          const wasSent = existing.status === "sent";
-          const wasNegative = existing.reply_sentiment === "negative";
-          const wasRejected = existing.deal_stage === "rejected";
-
-          if (wasSent || wasNegative || wasRejected) {
-            status = "duplicate_blocked";
-            const reasons = [];
-            if (wasSent) reasons.push(`daha önce ${existing.sent_at || "bilinmeyen bir tarihte"} gönderildi`);
-            if (wasNegative) reasons.push("olumsuz yanıt vermişti");
-            if (wasRejected) reasons.push("reddedildi olarak işaretlenmişti");
-            lastError = `Bu marka ${reasons.join(", ")}. Otomatik arama/gönderimden hariç tutuldu; istersen tabloda elle düzenleyip devam edebilirsin.`;
-            duplicateBlockedCount++;
-          } else if (existing.email) {
-            // Önceki aramadan e-mail'i miras al, tekrar aramaya gerek yok
-            email = existing.email;
-            emailSource = existing.email_source;
-            confidence = existing.confidence;
-            status = "found";
-            reusedEmailCount++;
-          }
-        }
-
         insert.run(
-          batch, name, nameNorm, website, email, emailSource, confidence, status, lastError,
+          batch, name, nameNorm, website, null, null, "unknown", "pending", null,
           enrichment.brand_score, enrichment.main_category, enrichment.subcategory,
           enrichment.est_monthly_revenue, enrichment.est_monthly_sales, enrichment.avg_price,
           enrichment.avg_fba_sellers, enrichment.avg_sellers, enrichment.dominant_seller,
@@ -164,8 +143,7 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
       batch,
       count: brands.length,
       brands,
-      duplicateBlockedCount,
-      reusedEmailCount,
+      skippedExistingCount,
       enrichmentFieldsFound,
     });
   } catch (err) {
@@ -174,16 +152,16 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
   }
 });
 
-// En son yüklenen listeyi getir
+// Sistemdeki tüm markaları getir. Artık sadece "son yüklenen dosya" değil, bugüne
+// kadar yüklenmiş her marka tek bir listede — çünkü upload artık zaten daha önce
+// eklenmiş marka adlarını tekrar eklemiyor (bkz. /api/brands/upload), yani panel
+// hep tekilleştirilmiş, tutarlı bir liste gösteriyor.
 router.get("/api/brands", (req, res) => {
   const lastBatchRow = db
     .prepare("SELECT batch FROM brands ORDER BY id DESC LIMIT 1")
     .get();
-  if (!lastBatchRow) return res.json({ brands: [], batch: null });
-  const brands = db
-    .prepare("SELECT * FROM brands WHERE batch = ? ORDER BY id")
-    .all(lastBatchRow.batch);
-  res.json({ brands, batch: lastBatchRow.batch });
+  const brands = db.prepare("SELECT * FROM brands ORDER BY id").all();
+  res.json({ brands, batch: lastBatchRow ? lastBatchRow.batch : null });
 });
 
 // Tek bir marka için email arat
@@ -261,18 +239,17 @@ async function processFindAllQueue() {
 // (not_found/error) markaları dener — zaten bulunmuş (found) markaları tekrar
 // aratmaz, böylece SerpAPI/Serper/Hunter kotan boşa harcanmaz. Bir markayı elle
 // tekrar aratmak istersen tablodaki "Ara" butonunu kullanabilirsin.
+// Panel artık tek bir birleşik marka listesi gösterdiği için (bkz. GET /api/brands),
+// bu da tek bir yükleme/batch ile sınırlı değil — sistemdeki tüm uygun markaları kapsar.
 router.post("/api/brands/find-all", async (req, res) => {
   if (findAllJob.running) {
     return res.status(409).json({ error: "Zaten devam eden bir arama var. Önce durdur ya da bitmesini bekle." });
   }
-  const { batch } = req.body;
   const brands = db
-    .prepare(
-      "SELECT id FROM brands WHERE batch = ? AND status IN ('pending', 'not_found', 'error')"
-    )
-    .all(batch);
+    .prepare("SELECT id FROM brands WHERE status IN ('pending', 'not_found', 'error')")
+    .all();
 
-  findAllJob = { batch, remainingIds: brands.map((b) => b.id), running: false };
+  findAllJob = { batch: null, remainingIds: brands.map((b) => b.id), running: false };
   res.json({ ok: true, queued: brands.length });
   processFindAllQueue();
 });

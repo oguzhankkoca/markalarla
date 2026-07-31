@@ -108,21 +108,29 @@ function renderBrands() {
       </td>
       <td>${badge(b.status)}${sentViaTag}</td>
       <td>
-        <button class="small find-btn" data-id="${b.id}">Ara</button>
-        <button class="small send-btn" data-id="${b.id}" ${!b.email || b.status === "duplicate_blocked" ? "disabled" : ""}>Gönder</button>
-        ${
-          !b.email && b.contact_page_url
-            ? `<button class="small secondary contact-btn" data-id="${b.id}">Form Aç</button>
-               <button class="small secondary mark-sent-btn" data-id="${b.id}" ${b.status === "sent" ? "disabled" : ""}>Gönderildi İşaretle</button>`
-            : ""
-        }
-        ${hasMarketData(b) ? `<button class="small secondary market-btn" data-id="${b.id}">Piyasa Verisi</button>` : ""}
-        <button class="small secondary detail-btn" data-id="${b.id}">Detay</button>
+        <div class="actions-cell">
+          <button class="small find-btn" data-id="${b.id}" title="E-mail ara">Ara</button>
+          <button class="small send-btn" data-id="${b.id}" title="Mail gönder" ${!b.email || b.status === "duplicate_blocked" ? "disabled" : ""}>Gönder</button>
+          ${
+            !b.email && b.contact_page_url
+              ? `<button class="small secondary contact-btn" data-id="${b.id}" title="İletişim formunu aç">Form Aç</button>
+                 <button class="small secondary mark-sent-btn" data-id="${b.id}" title="Formdan gönderildi olarak işaretle" ${b.status === "sent" ? "disabled" : ""}>✓ İşaretle</button>`
+              : ""
+          }
+          ${hasMarketData(b) ? `<button class="small secondary market-btn" data-id="${b.id}" title="Piyasa verisi">📊</button>` : ""}
+          <button class="small secondary detail-btn" data-id="${b.id}" title="Arama adımları detayı">Detay</button>
+        </div>
       </td>
     `;
     brandsBody.appendChild(tr);
   }
   attachRowEvents();
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  const el = document.getElementById("selectedCount");
+  if (el) el.textContent = `${selectedIds.size} marka seçili`;
 }
 
 function attachRowEvents() {
@@ -130,6 +138,7 @@ function attachRowEvents() {
     cb.addEventListener("change", () => {
       if (cb.checked) selectedIds.add(cb.dataset.id);
       else selectedIds.delete(cb.dataset.id);
+      updateSelectedCount();
     });
   });
 
@@ -354,16 +363,18 @@ document.getElementById("uploadBtn").addEventListener("click", async () => {
     document.getElementById("uploadStatus").textContent = "Hata: " + data.error;
     return;
   }
-  let msg = `${data.count} marka yüklendi.`;
-  if (data.duplicateBlockedCount) msg += ` ${data.duplicateBlockedCount} tanesi daha önce gönderilmiş/olumsuzdu, otomatik işlemlerden hariç tutuldu.`;
-  if (data.reusedEmailCount) msg += ` ${data.reusedEmailCount} tanesi için önceden bulunan e-mail kullanıldı.`;
+  let msg = `${data.count} yeni marka eklendi.`;
+  if (data.skippedExistingCount) {
+    msg += ` ${data.skippedExistingCount} tanesi sistemde zaten kayıtlı olduğu için tekrar eklenmedi.`;
+  }
   if (data.enrichmentFieldsFound && data.enrichmentFieldsFound.length > 0) {
     msg += ` Ek marka verisi algılandı (${data.enrichmentFieldsFound.length} sütun) — satırlardaki "Piyasa Verisi" butonundan görebilirsin.`;
   }
   document.getElementById("uploadStatus").textContent = msg;
-  brands = data.brands;
   batch = data.batch;
-  renderBrands();
+  // Sadece bu yüklemeden gelenleri değil, sistemdeki tüm (tekilleştirilmiş) marka
+  // listesini yeniden çekiyoruz ki panel her zaman tam ve tutarlı kalsın.
+  await loadBrands();
 });
 
 // Toplu email arama artık durdurulup kaldığı yerden devam ettirilebiliyor. Sunucu
@@ -400,12 +411,8 @@ function startFindAllPolling() {
 }
 
 document.getElementById("findAllBtn").addEventListener("click", async () => {
-  if (!batch) return alert("Önce bir liste yükle.");
-  const res = await fetch("/api/brands/find-all", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ batch }),
-  });
+  if (brands.length === 0) return alert("Önce bir liste yükle.");
+  const res = await fetch("/api/brands/find-all", { method: "POST" });
   const data = await res.json();
   if (!res.ok) return alert(data.error || "Başlatılamadı.");
   document.getElementById("findStatus").textContent = "Arama başladı, arka planda çalışıyor...";

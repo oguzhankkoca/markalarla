@@ -11,11 +11,11 @@
 <body>
   <div class="app-layout">
     <aside class="sidebar">
-      <div class="sidebar-logo">🚀 Neofa Outreach</div>
+      <div class="sidebar-logo">🚀 <span class="logo-text">Neofa Outreach</span></div>
       <nav>
-        <a href="/index.html" class="nav-link active">📋 Panel</a>
-        <a href="/tracking.html" class="nav-link">📬 Gönderim Takibi</a>
-        <a href="/analytics.html" class="nav-link">📊 Özet</a>
+        <a href="/index.html" class="nav-link active">📋 <span class="nav-label">Panel</span></a>
+        <a href="/tracking.html" class="nav-link">📬 <span class="nav-label">Gönderim Takibi</span></a>
+        <a href="/analytics.html" class="nav-link">📊 <span class="nav-label">Özet</span></a>
       </nav>
       <div class="sidebar-footer" id="emailStatus"></div>
     </aside>
@@ -86,15 +86,25 @@
           <button id="saveDailyLimitBtn" class="secondary">Kaydet</button>
         </div>
 
-        <div class="card">
+        <div class="card card-wide">
           <h2>6️⃣ Markalar ve gönderim</h2>
           <div class="toolbar">
             <button id="sendSelectedBtn">Seçilenleri Gönder</button>
             <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
+            <span class="muted" id="selectedCount">0 marka seçili</span>
             <span class="muted" id="sendStatus"></span>
           </div>
           <div style="overflow-x:auto;">
           <table id="brandsTable">
+            <colgroup>
+              <col style="width:32px;" />
+              <col style="width:13%;" />
+              <col style="width:11%;" />
+              <col style="width:17%;" />
+              <col style="width:17%;" />
+              <col style="width:9%;" />
+              <col />
+            </colgroup>
             <thead>
               <tr>
                 <th><input type="checkbox" id="selectAllCheckbox" /></th>

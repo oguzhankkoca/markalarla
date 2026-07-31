@@ -21,23 +21,27 @@ function guessColumns(rows) {
 // SmartScout ve benzeri marka istihbarat araçlarından export edilen Excel'lerde sıkça
 // görülen, markayı önceliklendirmek için en faydalı sütunlar. Excel'de bu başlıklardan
 // biri varsa otomatik algılanıp veritabanına kaydedilir; yoksa sorun değil, boş kalır.
+// NOT: Bu desenler artık tam eşleşme (^...$) DEĞİL, İÇERME (substring) bazlı — gerçek
+// dünyada başlıklar "Brand Score (1-100)" ya da fazladan boşluk/parantez gibi küçük
+// varyasyonlarla gelebiliyor; tam eşleşme bunları kaçırıp Ciro/Skor gibi kritik
+// verilerin hiç çekilmemesine yol açabiliyordu.
 const ENRICHMENT_COLUMNS = [
-  { key: "brand_score", match: /^brand\s*score$/i, type: "number" },
-  { key: "main_category", match: /^main\s*category$/i, type: "text" },
-  { key: "subcategory", match: /^(primary\s*)?sub\s*category$/i, type: "text" },
-  { key: "est_monthly_revenue", match: /^est\.?\s*monthly\s*revenue$/i, type: "number" },
-  { key: "est_monthly_sales", match: /^est\.?\s*monthly\s*sales$/i, type: "number" },
-  { key: "avg_price", match: /^avg\.?\s*price$/i, type: "number" },
-  { key: "avg_fba_sellers", match: /^avg\.?\s*fba\s*sellers$/i, type: "number" },
-  { key: "avg_sellers", match: /^avg\.?\s*sellers$/i, type: "number" },
-  { key: "dominant_seller", match: /^dominant\s*seller$/i, type: "text" },
-  { key: "sales_percentage", match: /^sales\s*%$/i, type: "number" },
-  { key: "amazon_in_stock_rate", match: /^amazon\s*in-?stock\s*rate$/i, type: "number" },
-  { key: "avg_rating", match: /^avg\.?\s*rating$/i, type: "number" },
-  { key: "total_reviews", match: /^total\s*reviews$/i, type: "number" },
-  { key: "growth_12m", match: /^12\s*month\s*growth$/i, type: "number" },
-  { key: "product_count", match: /^product\s*count$/i, type: "number" },
-  { key: "storefront_url", match: /^storefront\s*url$/i, type: "text" },
+  { key: "brand_score", match: /brand\s*score/i, type: "number" },
+  { key: "main_category", match: /main\s*category/i, type: "text" },
+  { key: "subcategory", match: /(primary\s*)?sub\s*category/i, type: "text" },
+  { key: "est_monthly_revenue", match: /est\.?\s*monthly\s*revenue/i, type: "number" },
+  { key: "est_monthly_sales", match: /est\.?\s*monthly\s*sales/i, type: "number" },
+  { key: "avg_price", match: /avg\.?\s*price/i, type: "number" },
+  { key: "avg_fba_sellers", match: /avg\.?\s*fba\s*sellers/i, type: "number" },
+  { key: "avg_sellers", match: /avg\.?\s*sellers/i, type: "number" },
+  { key: "dominant_seller", match: /dominant\s*seller/i, type: "text" },
+  { key: "sales_percentage", match: /sales\s*%/i, type: "number" },
+  { key: "amazon_in_stock_rate", match: /amazon\s*in-?stock\s*rate/i, type: "number" },
+  { key: "avg_rating", match: /avg\.?\s*rating/i, type: "number" },
+  { key: "total_reviews", match: /total\s*reviews/i, type: "number" },
+  { key: "growth_12m", match: /12\s*month\s*growth/i, type: "number" },
+  { key: "product_count", match: /product\s*count/i, type: "number" },
+  { key: "storefront_url", match: /storefront\s*url/i, type: "text" },
 ];
 
 function parseEnrichmentNumber(raw) {
@@ -108,6 +112,15 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
     );
 
     let skippedExistingCount = 0;
+    let skippedNoDataCount = 0;
+    // Dosyada Brand Score ve/veya Est. Monthly Revenue sütunu gerçekten varsa (yani
+    // kullanıcı bu veriyle önceliklendirme yapmak istiyorsa), bir satırda ikisi de
+    // 0/boşsa o markayı hiç sisteme eklemiyoruz — SmartScout gibi araçlarda "veri
+    // yok/aktif değil" genelde 0 olarak dışa aktarılır, bu markalar işe yaramaz.
+    // Dosyada bu sütunlar hiç yoksa (ör. sade bir marka adı listesi) bu filtre
+    // devreye girmez, normal şekilde herkes eklenir.
+    const hasScoreColumn = Boolean(enrichmentMap.brand_score);
+    const hasRevenueColumn = Boolean(enrichmentMap.est_monthly_revenue);
 
     const insertMany = db.transaction((items) => {
       for (const item of items) {
@@ -119,10 +132,20 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
           skippedExistingCount++;
           continue;
         }
-        existingNames.add(nameNorm);
 
         const website = websiteKey ? String(item[websiteKey] || "").trim() : "";
         const enrichment = extractEnrichment(item, enrichmentMap);
+
+        if (hasScoreColumn || hasRevenueColumn) {
+          const scoreEmpty = !enrichment.brand_score;
+          const revenueEmpty = !enrichment.est_monthly_revenue;
+          if (scoreEmpty && revenueEmpty) {
+            skippedNoDataCount++;
+            continue;
+          }
+        }
+
+        existingNames.add(nameNorm);
 
         insert.run(
           batch, name, nameNorm, website, null, null, "unknown", "pending", null,
@@ -144,6 +167,7 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
       count: brands.length,
       brands,
       skippedExistingCount,
+      skippedNoDataCount,
       enrichmentFieldsFound,
     });
   } catch (err) {
@@ -162,6 +186,65 @@ router.get("/api/brands", (req, res) => {
     .get();
   const brands = db.prepare("SELECT * FROM brands ORDER BY id").all();
   res.json({ brands, batch: lastBatchRow ? lastBatchRow.batch : null });
+});
+
+// v21'den önce yüklenen dosyalarda (ya da tekrar önleme devreye girmeden önce
+// yüklenmiş aynı Excel'lerde) aynı marka birden fazla satır olarak kalmış olabilir.
+// Yeni yüklemeler artık zaten tekrar eklemiyor, ama sistemde önceden birikmiş
+// tekrarları temizlemek için bu buton var. Her aynı-isim grubunda "en gelişmiş"
+// durumdaki kaydı tutuyoruz (gönderilmiş > bulunmuş > aranmış ama bulunamamış >
+// beklemede; eşitlikte e-maili olan ve en eski kayıt tercih edilir), gerisini
+// send_log'uyla birlikte siliyoruz — böylece "Seçilenleri Gönder" aynı markaya
+// 2-3 kez mail atmaz.
+function brandPriorityScore(b) {
+  let score = 0;
+  if (b.status === "sent") score += 100;
+  else if (b.status === "found") score += 50;
+  else if (b.status === "not_found" || b.status === "error") score += 10;
+  if (b.email) score += 5;
+  if (b.brand_score || b.est_monthly_revenue) score += 2;
+  return score;
+}
+
+router.post("/api/brands/dedupe", (req, res) => {
+  try {
+    const groups = db
+      .prepare(
+        `SELECT name_normalized, COUNT(*) as c FROM brands
+         WHERE name_normalized IS NOT NULL AND name_normalized != ''
+         GROUP BY name_normalized HAVING c > 1`
+      )
+      .all();
+
+    let removed = 0;
+    const deleteBrand = db.prepare("DELETE FROM brands WHERE id = ?");
+    const deleteLogs = db.prepare("DELETE FROM send_log WHERE brand_id = ?");
+    const getGroupRows = db.prepare("SELECT * FROM brands WHERE name_normalized = ?");
+
+    const runDedupe = db.transaction(() => {
+      for (const g of groups) {
+        const rows = getGroupRows.all(g.name_normalized);
+        if (rows.length <= 1) continue;
+        rows.sort((a, b) => {
+          const diff = brandPriorityScore(b) - brandPriorityScore(a);
+          if (diff !== 0) return diff;
+          return a.id - b.id; // eşitlikte en eski (ilk yüklenen) kayıt tutulur
+        });
+        const [, ...duplicates] = rows;
+        for (const dup of duplicates) {
+          deleteLogs.run(dup.id);
+          deleteBrand.run(dup.id);
+          removed++;
+        }
+      }
+    });
+    runDedupe();
+
+    res.json({ ok: true, removed, groupsAffected: groups.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Tekilleştirme sırasında hata oluştu: " + err.message });
+  }
 });
 
 // Tek bir marka için email arat

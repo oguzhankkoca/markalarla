@@ -2,6 +2,7 @@ let batch = null;
 let brands = [];
 let previewBrandId = null;
 const selectedIds = new Set();
+let currentFilter = "all";
 
 const emailStatusEl = document.getElementById("emailStatus");
 const brandsBody = document.getElementById("brandsBody");
@@ -87,9 +88,40 @@ function hasMarketData(b) {
   );
 }
 
+// Durum filtre sekmeleri (Bulunanlar/Bulunamayanlar/Beklemede) için: bir markanın
+// hangi gruba girdiğini tek yerden belirliyoruz.
+function matchesFilter(b, filter) {
+  if (filter === "all") return true;
+  if (filter === "found") return b.status === "found";
+  if (filter === "not_found") return b.status === "not_found" || b.status === "error";
+  if (filter === "pending") return b.status === "pending";
+  return true;
+}
+
+function renderFilterTabs() {
+  const counts = { all: brands.length, found: 0, not_found: 0, pending: 0 };
+  for (const b of brands) {
+    if (b.status === "found") counts.found++;
+    else if (b.status === "not_found" || b.status === "error") counts.not_found++;
+    else if (b.status === "pending") counts.pending++;
+  }
+  const setText = (id, n) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = n;
+  };
+  setText("countAll", counts.all);
+  setText("countFound", counts.found);
+  setText("countNotFound", counts.not_found);
+  setText("countPending", counts.pending);
+  document.querySelectorAll(".filter-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.filter === currentFilter);
+  });
+}
+
 function renderBrands() {
   brandsBody.innerHTML = "";
-  for (const b of brands) {
+  const visibleBrands = brands.filter((b) => matchesFilter(b, currentFilter));
+  for (const b of visibleBrands) {
     const tr = document.createElement("tr");
     const contactLine =
       !b.email && b.contact_page_url
@@ -104,6 +136,7 @@ function renderBrands() {
       <td><input data-field="website" data-id="${b.id}" value="${b.website || ""}" /></td>
       <td>
         <input data-field="email" data-id="${b.id}" value="${b.email || ""}" />
+        ${b.email && b.confidence === "low" ? `<div class="confidence-warn">⚠️ düşük güven — bu site markaya ait olmayabilir, kontrol et</div>` : ""}
         ${contactLine}
       </td>
       <td>${badge(b.status)}${sentViaTag}</td>
@@ -126,6 +159,7 @@ function renderBrands() {
   }
   attachRowEvents();
   updateSelectedCount();
+  renderFilterTabs();
 }
 
 function updateSelectedCount() {
@@ -367,6 +401,9 @@ document.getElementById("uploadBtn").addEventListener("click", async () => {
   if (data.skippedExistingCount) {
     msg += ` ${data.skippedExistingCount} tanesi sistemde zaten kayıtlı olduğu için tekrar eklenmedi.`;
   }
+  if (data.skippedNoDataCount) {
+    msg += ` ${data.skippedNoDataCount} tanesi Ciro/Skor verisi olmadığı (0/boş) için eklenmedi.`;
+  }
   if (data.enrichmentFieldsFound && data.enrichmentFieldsFound.length > 0) {
     msg += ` Ek marka verisi algılandı (${data.enrichmentFieldsFound.length} sütun) — satırlardaki "Piyasa Verisi" butonundan görebilirsin.`;
   }
@@ -534,12 +571,55 @@ document.getElementById("sendSelectedBtn").addEventListener("click", () => {
 });
 
 selectAllCheckbox.addEventListener("change", () => {
+  // Bir filtre sekmesi aktifse "tümünü seç" sadece o an görünen (filtrelenmiş)
+  // markaları etkiler, gizli olanları değil.
+  const visible = brands.filter((b) => matchesFilter(b, currentFilter));
   if (selectAllCheckbox.checked) {
-    brands.forEach((b) => selectedIds.add(String(b.id)));
+    visible.forEach((b) => selectedIds.add(String(b.id)));
   } else {
-    selectedIds.clear();
+    visible.forEach((b) => selectedIds.delete(String(b.id)));
   }
   renderBrands();
+});
+
+// Durum filtre sekmeleri: tıklanan sekmeye göre tabloyu filtreler VE o gruptaki
+// tüm markaları otomatik seçer ki "Seçilenleri Gönder" ile direkt o gruba
+// gönderilebilsin. "Tümü" sekmesi sadece filtreyi kaldırır, seçimi değiştirmez.
+document.querySelectorAll(".filter-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    currentFilter = btn.dataset.filter;
+    if (currentFilter !== "all") {
+      selectedIds.clear();
+      brands.filter((b) => matchesFilter(b, currentFilter)).forEach((b) => selectedIds.add(String(b.id)));
+    }
+    renderBrands();
+  });
+});
+
+// Kullanıcı aynı Excel'i birden fazla kez yüklediyse (ya da eski bir sürümde
+// yüklediyse, çünkü tekrar önleme sonradan eklendi), sistemde aynı marka birden
+// fazla satır olarak kalmış olabilir — bu da "Seçilenleri Gönder" dediğinde aynı
+// markaya 2-3 kez mail atılmasına yol açar. Bu buton mevcut veriyi tekilleştirir.
+document.getElementById("dedupeBtn").addEventListener("click", async () => {
+  if (!confirm("Aynı marka adına sahip tekrarlanan satırlar bulunup temizlenecek (en gelişmiş durumdaki kayıt tutulur, diğerleri silinecek). Devam edilsin mi?")) return;
+  const btn = document.getElementById("dedupeBtn");
+  btn.disabled = true;
+  btn.textContent = "Temizleniyor...";
+  try {
+    const res = await fetch("/api/brands/dedupe", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || "Temizlenemedi.");
+      return;
+    }
+    alert(data.removed > 0 ? `${data.removed} tekrarlanan marka satırı kaldırıldı.` : "Tekrarlanan marka bulunamadı.");
+    await loadBrands();
+  } catch (e) {
+    alert("Hata: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Tekrarlananları Birleştir";
+  }
 });
 
 document.getElementById("previewSendBtn").addEventListener("click", async () => {

@@ -95,9 +95,17 @@
           <div class="toolbar">
             <button id="sendSelectedBtn">Seçilenleri Gönder</button>
             <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
+            <button id="dedupeBtn" class="secondary" title="Aynı marka birden fazla kez varsa tekilleştirir">Tekrarlananları Birleştir</button>
             <span class="muted" id="selectedCount">0 marka seçili</span>
             <span class="muted" id="sendStatus"></span>
           </div>
+          <div class="filter-tabs" id="filterTabs">
+            <button class="filter-tab active" data-filter="all">Tümü <span class="filter-count" id="countAll">0</span></button>
+            <button class="filter-tab" data-filter="found">Bulunanlar <span class="filter-count" id="countFound">0</span></button>
+            <button class="filter-tab" data-filter="not_found">Bulunamayanlar <span class="filter-count" id="countNotFound">0</span></button>
+            <button class="filter-tab" data-filter="pending">Beklemede <span class="filter-count" id="countPending">0</span></button>
+          </div>
+          <p class="muted" style="margin-top:-4px;">Bir sekmeye tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm markalar otomatik seçilir (checkbox işaretlenir) — "Seçilenleri Gönder" ile direkt o gruba gönderebilirsin.</p>
           <div style="overflow-x:auto;">
           <table id="brandsTable">
             <colgroup>

@@ -98,8 +98,22 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
    - Arama sonuçları artık marka adıyla domain adını karşılaştırıp en iyi eşleşeni seçiyor
      (ör. "Acme Coffee" için acmecoffee.com gibi bir sonuç, alakasız bir haber/dizin sitesine
      tercih edilir) ve seçilen sitenin ana sayfasında marka adının gerçekten geçip geçmediğini
-     kontrol ediyor. Yine de bu %100 garanti değil — "Detay" butonundan hangi adımların
-     izlendiğini görebilir, şüpheliyse e-maili göndermeden önce siteyi elle kontrol edebilirsin.
+     kontrol ediyor.
+   - **Devlet (.gov), askeriye (.mil) ve eğitim kurumu (.edu) siteleri artık hiç aday
+     olarak bile değerlendirilmiyor** — Amazon'da satılan bir markanın resmi sitesi
+     neredeyse hiçbir zaman bu tür kurumsal siteler olamaz, bu yüzden baştan tamamen
+     hariç tutuluyor. Ayrıca sık karışan haber/ansiklopedi siteleri de (history.com,
+     britannica.com, nytimes.com vb.) kara listeye eklendi.
+   - **Doğrulamayı geçemeyen bir site artık gerçekten reddediliyor.** Eskiden ana sayfa
+     kontrolü "bu site markaya ait değil gibi" dese bile sistem yine de o siteyi
+     kullanmaya devam ediyor, sadece bir uyarı notu bırakıyordu. Artık öyle değil: bir
+     aday doğrulamayı geçemezse (ek bir arama isteği harcamadan) aynı sonuçlardaki bir
+     sonraki adaya geçiliyor; hiçbiri geçemezse bir sonraki arama ifadesi deneniyor.
+     Hiçbir aday kesin olarak doğrulanamazsa, en olası aday yine de "düşük güven"
+     etiketiyle kullanılıyor (tamamen boş bırakmak yerine) — bu durumda tabloda
+     e-mailin altında kırmızı **"⚠️ düşük güven — bu site markaya ait olmayabilir,
+     kontrol et"** notu görünür. Bu notu gördüğün markaları göndermeden önce mutlaka
+     elle kontrol et; hiç görmediğin markalarda sistem zaten kendinden emin demektir.
    - Arama sırasında **"Durdur"** butonuyla işlemi durdurabilir, sonra **"Devam Et"**
      ile kaldığı markadan itibaren devam ettirebilirsin (baştan başlamaz, sadece henüz
      aranmamış markaları işler). Not: sunucu yeniden başlarsa (örn. Render yeni bir
@@ -130,6 +144,17 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
      gönderim limiti" bölümünden günde en fazla kaç mail gönderileceğini gir (örn. 60).
      Sistem bu kadarını her gün 08:00-20:00 (UTC) arasına yayarak kendiliğinden
      gönderir, elle bir şey yapmana gerek kalmaz. 0 bırakırsan bu özellik kapalı olur.
+   - **Durum filtre sekmeleri**: tablonun üstünde "Tümü / Bulunanlar / Bulunamayanlar /
+     Beklemede" sekmeleri var, her birinin yanında kaç marka olduğu yazıyor. Bir sekmeye
+     tıklayınca tablo o gruba filtrelenir VE o gruptaki tüm markalar otomatik seçilir
+     (checkbox işaretlenir) — böylece örn. "Bulunanlar"a tıklayıp direkt "Seçilenleri
+     Gönder"e basarak sadece e-maili bulunmuş markalara gönderebilirsin.
+   - **"Tekrarlananları Birleştir"**: aynı marka adını birden fazla Excel'de/kez
+     yüklediysen (ya da tekrar önleme özelliği eklenmeden önce yüklediysen) tabloda aynı
+     marka birden fazla satır olarak görünebilir — bu butona basınca sistem aynı isimli
+     satırları bulur, en gelişmiş durumdaki kaydı (gönderilmiş > bulunmuş > aranmış ama
+     bulunamamış > beklemede) tutup diğerlerini siler. Bunu yapmazsan "Seçilenleri
+     Gönder" aynı markaya birden fazla mail gönderebilir.
 
 ## Gönderim Takibi (yanıt kontrolü + otomatik follow-up)
 
@@ -186,7 +211,16 @@ yanında kısa bir özet ("Skor: 82 · $45.000/ay · 6 satıcı" gibi) görünü
 butonuna basarak tüm alanları (kategori, ortalama fiyat, satıcı sayıları, Amazon'un kendi
 satış payı, stok oranı, puan/yorum sayısı, büyüme oranı, storefront linki vb.) görebilirsin.
 Bu veriler markaları önceliklendirmen için bir yardımcı sinyaldir, otomatik bir
-filtreleme/sıralama yapmaz — hangi markalara öncelik vereceğine sen karar verirsin.
+sıralama yapmaz — hangi markalara öncelik vereceğine sen karar verirsin.
+
+**Tek istisna**: dosyanda "Brand Score" ve/veya "Est. Monthly Revenue" sütunu varsa
+(yani bu veriyle önceliklendirme yapmak istediğin belli oluyorsa) ve bir markanın
+satırında **ikisi de 0/boş** ise, o marka sisteme hiç eklenmez — SmartScout gibi
+araçlarda "veri yok/aktif değil" genelde 0 olarak dışa aktarılır ve bu markalar
+işine yaramaz. Dosyanda bu sütunlar hiç yoksa (sade bir marka adı listesiyse) bu
+filtre devreye girmez, herkes normal şekilde eklenir. Sütun başlıkları artık daha
+esnek eşleştiriliyor (ör. "Brand Score (1-100)" gibi ek metin içeren başlıkları da
+yakalar), böylece bu veriler atlanmadan güvenilir şekilde çekilir.
 
 ## Tekrar yükleme / kara liste koruması
 

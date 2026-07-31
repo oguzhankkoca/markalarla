@@ -276,6 +276,16 @@ button:disabled { background: #d9dbe6; color: #9498ac; cursor: not-allowed; }
 .badge.duplicate_blocked { background: #ececf3; color: #4b4f66; }
 .badge.bounced { background: #fde68a; color: #92400e; }
 
+/* Sistem bir domain'i/e-maili "düşük güvenle" (yani markaya ait olduğundan tam emin
+   olamadan) seçtiğinde bunu tabloda açıkça göstermek için — böylece kullanıcı
+   göndermeden önce şüpheli eşleşmeleri fark edebilir. */
+.confidence-warn {
+  color: var(--danger-text);
+  font-size: 11px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
 /* ---------- Table ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th, td { text-align: left; padding: 10px 8px; vertical-align: top; }
@@ -306,6 +316,27 @@ td input[type="checkbox"] { min-width: 0; width: auto; padding: 0; }
 #brandsTable { table-layout: fixed; }
 #brandsTable .actions-cell { display: flex; flex-wrap: wrap; gap: 4px; }
 .card-wide { max-width: none; }
+
+/* ---------- Durum filtre sekmeleri ---------- */
+.filter-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-tab {
+  background: #eef0f6;
+  color: var(--text);
+  border: 1.5px solid transparent;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-tab:hover { background: #e2e4ee; }
+.filter-tab.active { background: var(--primary-soft); color: var(--primary-dark); border-color: var(--primary); }
+.filter-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-weight: 700;
+  opacity: 0.75;
+}
 
 /* ---------- Misc ---------- */
 .status-line { font-size: 13px; font-weight: 600; }

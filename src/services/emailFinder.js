@@ -77,6 +77,22 @@ const NON_OFFICIAL_DOMAINS = [
   "bestbuy.com",
   "google.com",
   "bing.com",
+  // Haber / ansiklopedi / referans siteleri — arama sonuçlarında bir markanın adı
+  // bir haberde/makalede geçtiği için sıkça çıkar ama markanın kendi sitesi değildir.
+  "history.com",
+  "biography.com",
+  "britannica.com",
+  "nytimes.com",
+  "cnn.com",
+  "bbc.com",
+  "bbc.co.uk",
+  "npr.org",
+  "reuters.com",
+  "apnews.com",
+  "usatoday.com",
+  "imdb.com",
+  "smithsonianmag.com",
+  "history.state.gov",
 ];
 
 // Yukarıdaki tam domain listesine ek olarak, marka/ülke fark etmeksizin her yerde
@@ -92,6 +108,15 @@ const NON_OFFICIAL_PATTERNS = [
   /(^|\.)wikipedia\./i,
   /(^|\.)yelp\./i,
   /(^|\.)trustpilot\./i,
+  // Amazon'da satılan markalar ticari şirketlerdir — bir markanın "resmi sitesi"
+  // neredeyse HİÇBİR ZAMAN bir devlet kurumu (.gov), askeri (.mil) ya da eğitim
+  // kurumu (.edu) sitesi olamaz. Bunlar ülke koduyla da gelebilir (gov.uk, gov.tr,
+  // mil.tr, edu.tr, europa.eu vb.) — TLD'nin sonu ".gov"/".mil"/".edu" ile bitiyorsa
+  // ya da bunlardan hemen önce bir nokta varsa (gov.xx gibi) engelle.
+  /\.gov(\.[a-z]{2,3})?$/i,
+  /\.mil(\.[a-z]{2,3})?$/i,
+  /\.edu(\.[a-z]{2,3})?$/i,
+  /(^|\.)europa\.eu$/i,
 ];
 
 function isOfficialLookingDomain(domain) {
@@ -140,15 +165,6 @@ function domainMatchesBrand(domain, brandName) {
   const mainToken = tokens[0];
   if (mainToken && mainToken.length >= 3 && coreDomain.includes(mainToken)) return true;
   return false;
-}
-
-// Bir aday listesinden marka adıyla en iyi örtüşeni seçer; hiçbiri örtüşmüyorsa
-// (bazı markaların domaini gerçekten farklı olabilir) yine de ilk sonucu döner
-// ama bunu trace'e "dikkatli kontrol et" notuyla işaretleriz.
-function pickBestCandidate(candidates, brandName) {
-  if (candidates.length === 0) return null;
-  const matched = candidates.find((c) => domainMatchesBrand(c.domain, brandName));
-  return matched || candidates[0];
 }
 
 const httpClient = axios.create({
@@ -286,28 +302,43 @@ Sadece şu JSON formatında cevap ver, başka hiçbir açıklama ekleme:
   return { domain: picked.domain, confidence: parsed.confidence };
 }
 
-async function resolveFromCandidates(candidates, sourceName, brandName, trace) {
-  if (candidates.length === 0) return null;
+// ÖNEMLİ: Bu fonksiyon artık TEK bir domain değil, ÖNCELİK SIRALI bir domain listesi
+// döner. Eskiden sadece "en iyi" adayı seçip onu geri veriyorduk; o aday daha sonra
+// ana sayfa doğrulamasından geçemezse (örn. gerçekten markaya ait değilse) elimizde
+// başka seçenek kalmıyordu ve sistem yine de o (muhtemelen yanlış) siteyi kullanmaya
+// devam ediyordu. Artık aday listesinin tamamını sırayla döndürüyoruz ki çağıran taraf
+// (findOfficialDomainViaSearch) ilk aday doğrulamayı geçemezse bir sonrakini —
+// aynı arama sonucundan, EK bir API isteği harcamadan — deneyebilsin.
+async function rankCandidateDomains(candidates, sourceName, brandName, trace) {
+  if (candidates.length === 0) return [];
   trace.push(`${sourceName} adayları: ${candidates.map((c) => c.domain).join(", ")}`);
-  const heuristicBest = pickBestCandidate(candidates, brandName);
-  const heuristicMatched = domainMatchesBrand(heuristicBest.domain, brandName);
 
-  // Heuristik kelime eşleştirmesi emin değilse (marka adı domain'de görünmüyorsa),
-  // AI tanımlıysa ikinci bir görüş alıp onu tercih ediyoruz.
-  if (!heuristicMatched && ai.isConfigured()) {
+  const matched = candidates.filter((c) => domainMatchesBrand(c.domain, brandName));
+  const unmatched = candidates.filter((c) => !domainMatchesBrand(c.domain, brandName));
+  let ordered = [...matched, ...unmatched];
+
+  // Heuristik hiçbir adayı net eşleştiremediyse (marka adı hiçbir domain'de
+  // görünmüyorsa), AI tanımlıysa ikinci bir görüş alıp onun seçimini listenin başına alıyoruz.
+  if (matched.length === 0 && ai.isConfigured()) {
     const aiPick = await pickBestDomainWithAI(brandName, candidates, trace);
     if (aiPick && aiPick.domain) {
-      trace.push(`${sourceName}: AI'ın seçimi heuristikten daha güvenilir kabul edildi.`);
-      return aiPick.domain;
+      trace.push(`${sourceName}: AI'ın seçimi heuristikten daha güvenilir kabul edildi, öne alınıyor.`);
+      ordered = [{ domain: aiPick.domain }, ...ordered.filter((c) => c.domain !== aiPick.domain)];
     }
   }
 
-  if (heuristicMatched) {
-    trace.push(`${sourceName} ile bulundu (marka adıyla örtüşüyor): ${heuristicBest.domain}`);
-  } else {
-    trace.push(`${sourceName}'dan bulundu ama domain adı marka ile tam örtüşmüyor, dikkatli kontrol et: ${heuristicBest.domain}`);
+  if (matched.length > 0) {
+    trace.push(`${sourceName}: marka adıyla örtüşen adaylar önce denenecek: ${matched.map((c) => c.domain).join(", ")}`);
   }
-  return heuristicBest.domain;
+
+  const seen = new Set();
+  const uniqueDomains = [];
+  for (const c of ordered) {
+    if (seen.has(c.domain)) continue;
+    seen.add(c.domain);
+    uniqueDomains.push(c.domain);
+  }
+  return uniqueDomains;
 }
 
 // Bazı markalar tek bir arama ifadesiyle bulunamıyor (küçük/az bilinen markalar,
@@ -363,7 +394,7 @@ async function searchViaSerper(brandName, trace, query) {
       "Serper.dev",
       trace
     );
-    return resolveFromCandidates(candidates, "Serper.dev", brandName, trace);
+    return rankCandidateDomains(candidates, "Serper.dev", brandName, trace);
   } catch (e) {
     trace.push(`Serper.dev istek hatası: ${e.message}`);
     return null;
@@ -411,7 +442,7 @@ async function searchViaSerpApi(brandName, trace, query) {
       "SerpAPI",
       trace
     );
-    return resolveFromCandidates(candidates, "SerpAPI", brandName, trace);
+    return rankCandidateDomains(candidates, "SerpAPI", brandName, trace);
   } catch (e) {
     trace.push(`SerpAPI istek hatası: ${e.message}`);
     return null;
@@ -455,7 +486,7 @@ async function searchViaDuckDuckGo(brandName, trace, query, attempt = 1) {
       trace.push(`DuckDuckGo sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skippedDdg.join(", ")}`);
     }
     if (candidatesDdg.length > 0) {
-      return resolveFromCandidates(candidatesDdg, "DuckDuckGo", brandName, trace);
+      return rankCandidateDomains(candidatesDdg, "DuckDuckGo", brandName, trace);
     }
     if (skippedDdg.length === 0) {
       trace.push(`DuckDuckGo ("${query}") yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
@@ -472,29 +503,71 @@ async function searchViaDuckDuckGo(brandName, trace, query, attempt = 1) {
   }
 }
 
+// Aday domain listesini sırayla dener, ana sayfasını doğrulayıp GERÇEKTEN markaya
+// ait görünen ilk domaini döner. Bir aday reddedilirse (verifyDomainIsBrand ok:false
+// derse) EK bir arama isteği harcamadan bir sonraki adaya geçer — bu, "sistem yanlış
+// siteye mail atıyor" sorununun kök nedenini çözer: eskiden ilk/en olası aday ne
+// olursa olsun kullanılıyordu, artık markaya ait olmadığı anlaşılan bir site asla
+// kullanılmıyor. En fazla ilk 3 adayı dener (her biri bir sayfa taraması gerektirdiği
+// için maliyeti/süreyi sınırlı tutmak amacıyla).
+async function verifyCandidateList(brandName, domains, trace) {
+  for (const domain of domains.slice(0, 3)) {
+    const verdict = await verifyDomainIsBrand(brandName, domain, trace);
+    if (verdict.ok && verdict.confidence !== "low") {
+      trace.push(`"${domain}" doğrulandı (güven: ${verdict.confidence}), kullanılıyor.`);
+      return { domain, confidence: verdict.confidence };
+    }
+  }
+  return null;
+}
+
 async function findOfficialDomainViaSearch(brandName, trace) {
+  // Hiçbir aday kesin doğrulanamazsa bile elimizde en azından bir "düşük güvenli"
+  // yedek olsun istiyoruz — hiç sonuç döndürmemekten (kullanıcının elle aramak
+  // zorunda kalması) daha iyidir, ama panelde açıkça "düşük güven" olarak işaretlenir.
+  let lowConfidenceFallback = null;
+
   for (let i = 0; i < SEARCH_QUERY_VARIANTS.length; i++) {
     const query = SEARCH_QUERY_VARIANTS[i](brandName);
     if (i > 0) {
-      trace.push(`Önceki arama ifadesi hiç sonuç vermedi, farklı bir ifadeyle tekrar deneniyor: "${query}"`);
+      trace.push(`Önceki arama ifadesi hiç doğrulanabilir sonuç vermedi, farklı bir ifadeyle tekrar deneniyor: "${query}"`);
     }
 
+    const providerDomains = [];
     // 1) Serper.dev (tanımlıysa, dolar başına en verimli seçenek)
     const viaSerper = await searchViaSerper(brandName, trace, query);
-    if (viaSerper) return viaSerper;
+    if (viaSerper) providerDomains.push(...viaSerper);
 
     // 2) SerpAPI (tanımlıysa)
     const viaSerpApi = await searchViaSerpApi(brandName, trace, query);
-    if (viaSerpApi) return viaSerpApi;
+    if (viaSerpApi) providerDomains.push(...viaSerpApi);
 
     // 3) Ücretsiz fallback: DuckDuckGo
     const viaDdg = await searchViaDuckDuckGo(brandName, trace, query);
-    if (viaDdg) return viaDdg;
+    if (viaDdg) providerDomains.push(...viaDdg);
+
+    if (providerDomains.length === 0) continue;
+
+    const uniqueDomains = [...new Set(providerDomains)];
+    const verified = await verifyCandidateList(brandName, uniqueDomains, trace);
+    if (verified) return verified;
+
+    if (!lowConfidenceFallback && uniqueDomains[0]) {
+      lowConfidenceFallback = { domain: uniqueDomains[0], confidence: "low" };
+    }
   }
 
-  // 4) Son çare: marka adından direkt domain tahmini. Sadece .com değil, dernek/vakıf
+  if (lowConfidenceFallback) {
+    trace.push(
+      `Hiçbir aday kesin olarak doğrulanamadı, en olası aday düşük güvenle kullanılıyor: ${lowConfidenceFallback.domain} — göndermeden önce mutlaka elle kontrol et.`
+    );
+    return lowConfidenceFallback;
+  }
+
+  // Son çare: marka adından direkt domain tahmini. Sadece .com değil, dernek/vakıf
   // gibi kâr amacı gütmeyen markalarda sık görülen .org ve .net'i de sırayla dene
   // (ör. "White House Historical Association" gibi isimler genelde .org kullanır).
+  // Bu tahmin de aynı doğrulamadan geçirilir — çalışan ilk domain'i körü körüne kabul etmeyiz.
   const guess = brandName
     .toLowerCase()
     .normalize("NFD")
@@ -506,8 +579,12 @@ async function findOfficialDomainViaSearch(brandName, trace) {
       try {
         const { status } = await httpClient.get(`https://${guessedDomain}`, { timeout: 6000 });
         if (status < 400) {
-          trace.push(`Tahmin edilen domain çalışıyor: ${guessedDomain}`);
-          return guessedDomain;
+          trace.push(`Tahmin edilen domain çalışıyor: ${guessedDomain}, doğrulanıyor...`);
+          const verdict = await verifyDomainIsBrand(brandName, guessedDomain, trace);
+          if (verdict.ok) {
+            return { domain: guessedDomain, confidence: verdict.confidence };
+          }
+          continue;
         }
         trace.push(`Tahmin edilen domain (${guessedDomain}) yanıt kodu: ${status}`);
       } catch (e) {
@@ -605,6 +682,44 @@ Sadece şu JSON formatında cevap ver, başka açıklama ekleme:
   return parsed;
 }
 
+// TEK, MERKEZİ doğrulama fonksiyonu: bir domain'in gerçekten aranan markaya ait olup
+// olmadığını kontrol eder. Ana sayfayı çekip markanın en belirgin kelimesinin sayfada
+// geçip geçmediğine bakar; geçmiyorsa (ve AI tanımlıysa) Claude'a ikinci bir görüş
+// sorar. Hem arama sonuçlarından bulunan adaylar, hem Excel'den verilen website, hem
+// de son çare domain tahmini için kullanılır — eskiden bu kontrol sadece findBrandEmail
+// içinde bir kere yapılıyor ve olumsuz çıksa bile domain yine de kullanılıyordu (sadece
+// trace'e uyarı yazılıyordu). Artık "ok: false" dönerse çağıran taraf bu domain'i
+// GERÇEKTEN reddedip bir sonraki adaya geçiyor.
+async function verifyDomainIsBrand(brandName, domain, trace) {
+  const home = await scrapePage(`https://${domain}`, trace);
+  const normPageText = normalizeForMatch(home.text);
+  const mainToken = coreBrandTokens(brandName).sort((a, b) => b.length - a.length)[0];
+  const heuristicRelated = !(mainToken && mainToken.length >= 3 && !normPageText.includes(mainToken));
+
+  if (heuristicRelated) {
+    return { ok: true, confidence: "high" };
+  }
+
+  trace.push(`Uyarı: "${brandName}" adı ${domain} ana sayfasında geçmiyor, ek doğrulama yapılıyor...`);
+  const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace);
+  if (aiVerdict) {
+    if (aiVerdict.is_official && aiVerdict.confidence !== "low") {
+      return { ok: true, confidence: "medium" };
+    }
+    if (!aiVerdict.is_official) {
+      trace.push(`"${domain}" reddedildi: bu site markaya ait görünmüyor, başka bir aday deneniyor.`);
+      return { ok: false, confidence: "low" };
+    }
+  }
+
+  // AI tanımlı değil ya da net bir görüş veremedi: tamamen reddetmek yerine düşük
+  // güvenle kabul ediyoruz — aksi halde AI olmadan az bilinen/küçük markaların çoğu
+  // hiç bulunamaz hale gelir. Ama bu düşük güven panelde açıkça görünür (bkz. "⚠️
+  // kontrol et" etiketi), yani kontrolsüz gönderilmez.
+  trace.push(`"${domain}" için kesin bir doğrulama yapılamadı, düşük güvenle işaretlendi.`);
+  return { ok: true, confidence: "low" };
+}
+
 // Excel'deki "website" sütunu bazen gerçek bir link değil, bir buton/link etiketi
 // (örn. "Web Sitesi Ara") ya da başka bir metin içerebilir. Bunu gerçek bir
 // domain'den ayırt etmek için basit bir doğrulama yapıyoruz: boşluk içermemeli,
@@ -632,9 +747,21 @@ const CONTACT_PAGE_PATHS = [
   "/musteri-hizmetleri",
 ];
 
+// Hunter.io/site taramasından bulunan e-mail'in domain'i eşleşiyor mu VE seçtiğimiz
+// domain'in kendisi ne kadar güvenilir doğrulandı — ikisini birlikte değerlendirip
+// tek bir nihai güven seviyesine indirger. Domain düşük güvenle seçildiyse (yani
+// aslında markaya ait olduğundan emin değiliz), bulunan e-mail'in domain'i tutsa
+// bile sonucu asla "high" olarak işaretlemeyiz.
+function blendConfidence(domainConfidence, emailMatchesDomain) {
+  if (domainConfidence === "low") return "low";
+  if (emailMatchesDomain && domainConfidence === "high") return "high";
+  return "medium";
+}
+
 async function findBrandEmail(brandName, providedWebsite) {
   const trace = [];
   let domain = null;
+  let domainConfidence = "unknown";
 
   if (providedWebsite && looksLikeDomain(providedWebsite)) {
     const candidateDomain = providedWebsite
@@ -647,58 +774,53 @@ async function findBrandEmail(brandName, providedWebsite) {
     // kara listeyi burada da uyguluyoruz — aksi halde tüm markalara aynı (Amazon'a ait)
     // e-mail atanabilir.
     if (isOfficialLookingDomain(candidateDomain)) {
-      domain = candidateDomain;
-      trace.push(`Excel'den verilen website kullanıldı: ${domain}`);
+      // Excel'den gelen website de yanlış olabilir (yazım hatası, eski/güncel olmayan
+      // bilgi, başka bir markayla karışmış satır vb.) — o yüzden bunu da körü körüne
+      // güvenmiyoruz, aynı merkezi doğrulamadan geçiriyoruz.
+      const verdict = await verifyDomainIsBrand(brandName, candidateDomain, trace);
+      if (verdict.ok) {
+        domain = candidateDomain;
+        domainConfidence = verdict.confidence;
+        trace.push(`Excel'den verilen website kullanıldı: ${domain} (güven: ${domainConfidence})`);
+      } else {
+        trace.push(
+          `Excel'den verilen website ("${candidateDomain}") markaya ait görünmüyor, resmi site aranıyor.`
+        );
+        const found = await findOfficialDomainViaSearch(brandName, trace);
+        if (found) {
+          domain = found.domain;
+          domainConfidence = found.confidence;
+        }
+      }
     } else {
       trace.push(
         `Excel'den verilen website bir pazar yeri/sosyal medya linkiydi ("${candidateDomain}"), markanın kendi sitesi olarak kabul edilmedi, resmi site aranıyor.`
       );
-      domain = await findOfficialDomainViaSearch(brandName, trace);
+      const found = await findOfficialDomainViaSearch(brandName, trace);
+      if (found) {
+        domain = found.domain;
+        domainConfidence = found.confidence;
+      }
     }
   } else {
     if (providedWebsite) {
       trace.push(`Excel'deki website değeri geçerli bir domain gibi görünmüyor ("${providedWebsite}"), aramaya geçiliyor.`);
     }
-    domain = await findOfficialDomainViaSearch(brandName, trace);
+    const found = await findOfficialDomainViaSearch(brandName, trace);
+    if (found) {
+      domain = found.domain;
+      domainConfidence = found.confidence;
+    }
   }
 
   if (!domain) {
-    trace.push("Hiçbir yöntemle resmi site/domain bulunamadı.");
+    trace.push("Hiçbir yöntemle (kesin ya da düşük güvenle) resmi site/domain bulunamadı.");
     return { email: null, website: null, source: null, confidence: "not_found", contactUrl: null, trace };
   }
 
   const website = `https://${domain}`;
-
-  // Seçilen domain gerçekten markaya mı ait, yoksa alakasız bir site mi taranıyor —
-  // ana sayfayı çekip marka adının sayfada geçip geçmediğine bakarak basit bir
-  // sağlama yapıyoruz. Bu heuristik belirsiz/olumsuz çıkarsa (örn. marka adı sayfada
-  // birebir geçmiyor ama aslında doğru site olabilir — "Method" markası "Method Home"
-  // yazıyor olabilir), AI tanımlıysa sayfa başlığı+içeriğine bakarak ikinci bir görüş
-  // alıyoruz. Bu iki katmanlı kontrol yanlış siteye yazılan mailleri büyük ölçüde azaltır.
-  let homepageLooksRelated = true;
-  try {
-    const home = await scrapePage(website, trace);
-    const normPageText = normalizeForMatch(home.text);
-    const mainToken = coreBrandTokens(brandName).sort((a, b) => b.length - a.length)[0];
-    const heuristicRelated = !(mainToken && mainToken.length >= 3 && !normPageText.includes(mainToken));
-    homepageLooksRelated = heuristicRelated;
-
-    if (!heuristicRelated) {
-      trace.push(`Uyarı: "${brandName}" adı ${website} ana sayfasında geçmiyor, yanlış site seçilmiş olabilir.`);
-      const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace);
-      if (aiVerdict) {
-        if (aiVerdict.is_official && aiVerdict.confidence !== "low") {
-          homepageLooksRelated = true;
-          trace.push("AI heuristiği geçersiz kıldı: site gerçekten resmi görünüyor, güven yükseltildi.");
-        } else if (!aiVerdict.is_official) {
-          trace.push("AI de bu sitenin resmi olmadığını düşünüyor — göndermeden önce mutlaka elle kontrol et.");
-        }
-      } else {
-        trace.push("Göndermeden önce elle kontrol etmeni öneririz.");
-      }
-    }
-  } catch (e) {
-    // ana sayfa sağlaması başarısız olursa sessizce devam et, kritik değil
+  if (domainConfidence === "low") {
+    trace.push("Bu domain düşük güvenle seçildi — göndermeden önce mutlaka elle kontrol et.");
   }
 
   const hunterEmails = await findEmailsViaHunter(domain, trace);
@@ -709,7 +831,7 @@ async function findBrandEmail(brandName, providedWebsite) {
         email: cleaned[0].email,
         website,
         source: "hunter.io",
-        confidence: cleaned[0].sameDomain && homepageLooksRelated ? "high" : "medium",
+        confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain),
         contactUrl: null,
         trace,
       };
@@ -749,7 +871,7 @@ async function findBrandEmail(brandName, providedWebsite) {
     email: cleaned[0].email,
     website,
     source: "site_taramasi",
-    confidence: cleaned[0].sameDomain && homepageLooksRelated ? "high" : "low",
+    confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain),
     contactUrl: null,
     trace,
   };

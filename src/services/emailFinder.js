@@ -180,11 +180,20 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// rawEmails: düz string dizisi (site taramasından/mailto linklerinden) ya da
+// {value, confidence} nesneleri (Hunter.io'dan — confidence Hunter'ın kendi 0-100
+// güven skoru, bu e-mail'in gerçekten aktif/doğru olduğuna dair KENDİ tahminleri).
+// İkisini de kabul ediyoruz; Hunter'dan gelenlerde bu skoru sıralamada ve nihai
+// güven hesabında kullanıyoruz — eskiden bu skor tamamen atılıyordu.
 function cleanEmails(rawEmails, domain) {
   const seen = new Set();
   const list = [];
   for (const raw of rawEmails) {
-    const email = raw.trim().toLowerCase().replace(/[.,;]+$/, "");
+    const isObj = raw && typeof raw === "object";
+    const rawValue = isObj ? raw.value : raw;
+    const hunterConfidence = isObj && typeof raw.confidence === "number" ? raw.confidence : null;
+    if (!rawValue) continue;
+    const email = rawValue.trim().toLowerCase().replace(/[.,;]+$/, "");
     if (seen.has(email)) continue;
     seen.add(email);
     const emailDomain = email.split("@")[1] || "";
@@ -194,10 +203,16 @@ function cleanEmails(rawEmails, domain) {
       email,
       sameDomain: domain ? emailDomain.includes(domain) : false,
       generic: GENERIC_LOCAL_PARTS.includes(email.split("@")[0]),
+      hunterConfidence,
     });
   }
   list.sort((a, b) => {
-    const score = (x) => (x.sameDomain ? 2 : 0) + (!x.generic ? 1 : 0);
+    // sameDomain (0-2) ve generic-olmama (0-1) ana sıralama kriterleri; Hunter
+    // güven skoru varsa (0-1 aralığına normalize edilmiş) küçük bir ek ağırlık
+    // olarak ekleniyor — böylece iki eş değerli aday arasında Hunter'ın daha
+    // güvendiği e-mail öne çıkıyor, ama sameDomain/generic sinyallerini ezmiyor.
+    const score = (x) =>
+      (x.sameDomain ? 2 : 0) + (!x.generic ? 1 : 0) + (x.hunterConfidence !== null ? x.hunterConfidence / 100 : 0);
     return score(b) - score(a);
   });
   return list;
@@ -610,8 +625,17 @@ async function findEmailsViaHunter(domain, trace) {
       trace.push(`Hunter.io HTTP ${status}: ${JSON.stringify(data).slice(0, 200)}`);
       return [];
     }
-    const emails = (data.data?.emails || []).map((e) => e.value);
-    trace.push(`Hunter.io ${emails.length} email döndürdü.`);
+    const rawEmails = data.data?.emails || [];
+    const emails = rawEmails.map((e) => ({
+      value: e.value,
+      confidence: typeof e.confidence === "number" ? e.confidence : null,
+    }));
+    const confidences = emails.map((e) => e.confidence).filter((c) => c !== null);
+    trace.push(
+      `Hunter.io ${emails.length} email döndürdü` +
+        (confidences.length > 0 ? ` (güven skoru: ${Math.min(...confidences)}-${Math.max(...confidences)})` : "") +
+        "."
+    );
     return emails;
   } catch (e) {
     trace.push(`Hunter.io istek hatası: ${e.message}`);
@@ -747,13 +771,15 @@ const CONTACT_PAGE_PATHS = [
   "/musteri-hizmetleri",
 ];
 
-// Hunter.io/site taramasından bulunan e-mail'in domain'i eşleşiyor mu VE seçtiğimiz
-// domain'in kendisi ne kadar güvenilir doğrulandı — ikisini birlikte değerlendirip
-// tek bir nihai güven seviyesine indirger. Domain düşük güvenle seçildiyse (yani
-// aslında markaya ait olduğundan emin değiliz), bulunan e-mail'in domain'i tutsa
-// bile sonucu asla "high" olarak işaretlemeyiz.
-function blendConfidence(domainConfidence, emailMatchesDomain) {
+// Hunter.io/site taramasından bulunan e-mail'in domain'i eşleşiyor mu, seçtiğimiz
+// domain'in kendisi ne kadar güvenilir doğrulandı VE (varsa) Hunter.io'nun bu
+// e-mail için KENDİ güven skoru — üçünü birlikte değerlendirip tek bir nihai güven
+// seviyesine indirger. Domain düşük güvenle seçildiyse (markaya ait olduğundan tam
+// emin değilsek) ya da Hunter'ın kendisi bu e-mail'den emin değilse (skor < 50),
+// sonucu asla "high" olarak işaretlemeyiz — panelde "⚠️ düşük güven" olarak çıkar.
+function blendConfidence(domainConfidence, emailMatchesDomain, hunterConfidence) {
   if (domainConfidence === "low") return "low";
+  if (typeof hunterConfidence === "number" && hunterConfidence < 50) return "low";
   if (emailMatchesDomain && domainConfidence === "high") return "high";
   return "medium";
 }
@@ -831,7 +857,7 @@ async function findBrandEmail(brandName, providedWebsite) {
         email: cleaned[0].email,
         website,
         source: "hunter.io",
-        confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain),
+        confidence: blendConfidence(domainConfidence, cleaned[0].sameDomain, cleaned[0].hunterConfidence),
         contactUrl: null,
         trace,
       };

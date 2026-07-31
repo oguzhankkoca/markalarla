@@ -2,7 +2,7 @@ const express = require("express");
 const XLSX = require("xlsx");
 const db = require("../db");
 const mailer = require("../services/mailer");
-const { checkRepliesForMany, checkBounces } = require("../services/inboxChecker");
+const { checkRepliesForMany, checkBounces, testImapConnection } = require("../services/inboxChecker");
 
 const router = express.Router();
 
@@ -60,6 +60,7 @@ async function runFullCheck() {
     followUpsSent: 0,
     notificationsSent: 0,
     bouncesFound: 0,
+    documentsRequested: 0,
     errors: [],
   };
 
@@ -81,7 +82,19 @@ async function runFullCheck() {
   // 1) Önce bounce (geri dönen mail) taraması yap, bounce olanları döngü dışına al
   let bouncedIds = new Set();
   try {
-    bouncedIds = await checkBounces(brandList);
+    const bounceResult = await checkBounces(brandList);
+    bouncedIds = bounceResult.bouncedIds;
+    // ÖNEMLİ: eskiden bir arama kalıbı ya da mesaj okuma hatası sessizce yutulup
+    // hiçbir yerde gösterilmiyordu — bu yüzden gerçekte bir bağlantı/izin sorunu
+    // olsa bile ekranda "0 bulundu" görünüyor, kullanıcı neden hiçbir şey
+    // bulunamadığını hiç anlayamıyordu. Artık bu hatalar summary.errors'a ekleniyor
+    // ve "Yanıtları Kontrol Et" sonucunda açıkça gösteriliyor.
+    if (bounceResult.errors && bounceResult.errors.length > 0) {
+      const uniq = [...new Set(bounceResult.errors)];
+      summary.errors.push(
+        `Bounce taraması sırasında ${bounceResult.errors.length} hata oluştu: ${uniq.slice(0, 3).join(" | ")}${uniq.length > 3 ? " ..." : ""}`
+      );
+    }
     for (const id of bouncedIds) {
       db.prepare(
         "UPDATE brands SET bounced = 1, status = 'bounced', last_error = 'Mail geri döndü (geçersiz adres olabilir). E-maili düzeltip tekrar deneyebilirsin.' WHERE id = ?"
@@ -89,7 +102,7 @@ async function runFullCheck() {
       summary.bouncesFound++;
     }
   } catch (e) {
-    summary.errors.push(`Bounce taraması başarısız: ${e.message}`);
+    summary.errors.push(`Bounce taraması tamamen başarısız oldu: ${e.message}`);
   }
 
   const remainingCandidates = candidates.filter((b) => !bouncedIds.has(b.id));
@@ -101,19 +114,58 @@ async function runFullCheck() {
   }
 
   try {
-    const results = await checkRepliesForMany(remainingBrandList);
+    const { results, errors: replyErrors } = await checkRepliesForMany(remainingBrandList);
+    if (replyErrors && replyErrors.length > 0) {
+      const uniq = [...new Set(replyErrors)];
+      summary.errors.push(
+        `Yanıt taraması sırasında ${replyErrors.length} markada hata oluştu: ${uniq.slice(0, 3).join(" | ")}${uniq.length > 3 ? " ..." : ""}`
+      );
+    }
     const settings = db.prepare("SELECT * FROM settings WHERE id = 1").get();
 
     for (const brand of remainingCandidates) {
       const result = results.get(brand.id);
       db.prepare("UPDATE brands SET last_checked_at = CURRENT_TIMESTAMP WHERE id = ?").run(brand.id);
 
-      if (result && result.found) {
+      if (result && result.found && result.isBounceLike) {
+        // "Yanıt" gibi görünse de (marka adresinden geldiği için eşleşti) aslında
+        // otomatik bir teslim edilememe bildirimi — gerçek bir insan yanıtı sayma,
+        // bounce olarak işaretle ki "Ulaşmayanlar" listesinde görünsün.
         db.prepare(
-          `UPDATE brands SET replied = 1, reply_sentiment = ?, reply_snippet = ?, reply_from = ?
+          `UPDATE brands SET bounced = 1, status = 'bounced',
+           last_error = ? WHERE id = ?`
+        ).run(
+          result.aiReason
+            ? `Mail geri döndü (AI tespiti): ${result.aiReason}`
+            : "Mail geri döndü (geçersiz adres olabilir). E-maili düzeltip tekrar deneyebilirsin.",
+          brand.id
+        );
+        summary.bouncesFound++;
+        continue;
+      }
+
+      if (result && result.found) {
+        // matchType === "domain": marka adresinin kendisinden değil, aynı domain'deki
+        // FARKLI bir adresten gelen bir yanıt eşleşti (örn. şirketteki başka biri
+        // cevaplamış olabilir) — bunu snippet'e not düşüyoruz ki elle kontrol edesin.
+        const notePrefix =
+          result.matchType === "domain"
+            ? "[Not: bu yanıt marka adresinin kendisinden değil, aynı domain'deki farklı bir adresten geldi — kontrol et] "
+            : "";
+        db.prepare(
+          `UPDATE brands SET replied = 1, reply_sentiment = ?, reply_snippet = ?, reply_from = ?,
+           document_requested = ?, document_request_snippet = ?
            WHERE id = ?`
-        ).run(result.sentiment, result.snippet, result.from, brand.id);
+        ).run(
+          result.sentiment,
+          notePrefix + result.snippet,
+          result.from,
+          result.documentRequested ? 1 : 0,
+          result.documentRequested ? result.snippet : null,
+          brand.id
+        );
         summary.repliesFound++;
+        if (result.documentRequested) summary.documentsRequested++;
 
         if (result.sentiment === "positive" && !brand.notified) {
           try {
@@ -225,9 +277,25 @@ router.post("/api/tracking/check-replies", async (req, res) => {
   }
 });
 
+// Hızlı tanı: IMAP bağlantısı gerçekten çalışıyor mu, gelen kutusunda kaç mesaj
+// var? "Yanıtları Kontrol Et" sürekli 0 sonuç döndürüyorsa önce bunu dene —
+// saniyeler içinde kimlik bilgisi/erişim sorunu mu yoksa gerçekten eşleşen bir
+// şey mi yok olduğunu ayırt edebilirsin.
+router.get("/api/tracking/imap-test", async (req, res) => {
+  try {
+    const result = await testImapConnection();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: "IMAP bağlantısı kurulamadı: " + err.message,
+    });
+  }
+});
+
 // Bir markanın yanıt durumunu ve/veya pipeline aşamasını elle düzelt
 router.put("/api/tracking/:id", (req, res) => {
-  const { reply_sentiment, deal_stage } = req.body;
+  const { reply_sentiment, deal_stage, document_requested } = req.body;
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
 
@@ -239,6 +307,12 @@ router.put("/api/tracking/:id", (req, res) => {
       return res.status(400).json({ error: "Geçersiz aşama." });
     }
     db.prepare("UPDATE brands SET deal_stage = ? WHERE id = ?").run(deal_stage, brand.id);
+  }
+  if (document_requested !== undefined) {
+    db.prepare("UPDATE brands SET document_requested = ? WHERE id = ?").run(
+      document_requested ? 1 : 0,
+      brand.id
+    );
   }
   res.json({ ok: true });
 });
@@ -271,6 +345,7 @@ router.get("/api/tracking/export", (req, res) => {
     "Takip Aşaması": b.follow_up_stage || 0,
     "Anlaşma Aşaması": b.deal_stage || "new",
     "Geri Döndü mü": b.bounced ? "Evet" : "Hayır",
+    "Belge İstendi mi": b.document_requested ? "Evet" : "Hayır",
     "Marka Skoru": b.brand_score ?? "",
     "Tahmini Aylık Ciro": b.est_monthly_revenue ?? "",
     "Ort. Satıcı Sayısı": b.avg_sellers ?? "",

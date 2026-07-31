@@ -567,8 +567,26 @@ async function sendBatch(targets) {
 
 document.getElementById("sendAllBtn").addEventListener("click", () => {
   const targets = brands.filter(
-    (b) => b.email && !["sent", "duplicate_blocked", "bounced"].includes(b.status)
+    (b) =>
+      b.email &&
+      !["sent", "duplicate_blocked", "bounced"].includes(b.status) &&
+      b.confidence !== "low"
   );
+  const skippedLowConfidence = brands.filter(
+    (b) =>
+      b.email &&
+      !["sent", "duplicate_blocked", "bounced"].includes(b.status) &&
+      b.confidence === "low"
+  ).length;
+  if (skippedLowConfidence > 0) {
+    const proceed = confirm(
+      `${skippedLowConfidence} marka düşük güven skoru nedeniyle bu gönderimden hariç tutuldu ` +
+        `(yanlış markaya mail gitme riskini azaltmak için). Bunları "⚠️ Düşük Güven" sekmesinden ` +
+        `elle kontrol edip tekrar arayabilir ya da elle gönderebilirsin.\n\n` +
+        `Kalan ${targets.length} markaya göndermeye devam edilsin mi?`
+    );
+    if (!proceed) return;
+  }
   sendBatch(targets);
 });
 

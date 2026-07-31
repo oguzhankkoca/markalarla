@@ -114,6 +114,22 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
      e-mailin altında kırmızı **"⚠️ düşük güven — bu site markaya ait olmayabilir,
      kontrol et"** notu görünür. Bu notu gördüğün markaları göndermeden önce mutlaka
      elle kontrol et; hiç görmediğin markalarda sistem zaten kendinden emin demektir.
+   - **Hunter.io'nun kendi e-mail güven skoru artık kullanılıyor.** Hunter.io her bulduğu
+     e-mail için kendi içinde 0-100 arası bir güven puanı veriyor (bu adres gerçekten
+     çalışıyor mu, doğrulanmış mı gibi sinyallerden hesaplıyor); eskiden bu puan hiç
+     kullanılmıyor, sadece e-mail adresinin kendisi alınıyordu. Artık bu puan hem "hangi
+     e-mail önce denensin" sıralamasında hem de nihai güven etiketinde (yüksek/orta/düşük)
+     hesaba katılıyor — Hunter'ın 50'nin altında puan verdiği bir e-mail otomatik olarak
+     "düşük güven" işaretleniyor, domain doğrulaması ne kadar iyi geçmiş olursa olsun.
+   - **Düşük güvenli markalar artık toplu ve otomatik gönderimden hariç tutuluyor.**
+     "Bulunan tüm e-maillere gönder" butonuna bastığında sistem "⚠️ Düşük Güven"
+     etiketli markaları listeye hiç dahil etmiyor; eğer hariç tutulan marka varsa
+     kaç tanesinin atlandığını söyleyip geri kalanlara devam edip etmeyeceğini soruyor.
+     Aynı şekilde günlük otomatik gönderim (5️⃣ bölümündeki limit) de düşük güvenli
+     markaları otomatik olarak seçmiyor. Bu markalara göndermek istersen "⚠️ Düşük
+     Güven" sekmesinden bulup önce "Ara" ile tekrar arattırabilir ya da elle kontrol
+     edip tek tek "Gönder" ile gönderebilirsin — amaç yanlış markaya mail gitme
+     riskini, elindeki kontrolü kaybetmeden en aza indirmek.
    - Arama sırasında **"Durdur"** butonuyla işlemi durdurabilir, sonra **"Devam Et"**
      ile kaldığı markadan itibaren devam ettirebilirsin (baştan başlamaz, sadece henüz
      aranmamış markaları işler). Not: sunucu yeniden başlarsa (örn. Render yeni bir
@@ -168,18 +184,64 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
 Panelin sağ üstünden "Gönderim Takibi" sayfasına gidebilirsin. Bu sayfa:
 
 - **📪 Ulaşmayanlar**: sayfanın en üstünde, mail geri dönen (bounce/teslim edilemedi)
-  markaları ayrı ve öne çıkan bir kartta gösterir — genel takip listesiyle karışmaz.
-  Her satırda **"Tekrar E-mail Ara"** butonu var; bastığında sistem o marka için
-  yeniden internetten arama yapıp yeni bir e-mail bulmaya çalışır. Yeni bir e-mail
-  bulunursa marka otomatik olarak bu listeden kalkar ve Panel sayfasından tekrar
-  gönderilebilir hale gelir (eski "geri döndü" durumu temizlenir). Bulunamazsa Panel
-  sayfasından e-maili elle de düzeltebilirsin.
+  markaları ayrı ve öne çıkan bir kartta, artık **gerçek hata mesajıyla birlikte**
+  gösterir ("Hata Mesajı" sütunu — neden geri döndüğünü açıkça görürsün, örn. "geçersiz
+  adres olabilir" ya da AI'ın tespit ettiği asıl sebep). Her satırda **"Tekrar E-mail
+  Ara"** butonu var; bastığında sistem o marka için yeniden internetten arama yapar.
+  Yeni bir e-mail bulunursa artık **Panel sayfasına gitmene gerek kalmadan**, aynı
+  satırda beliren **"Şimdi Gönder"** butonuyla direkt gönderebilirsin (ana mail
+  şablonunu kullanır). Bulunamazsa Panel sayfasından e-maili elle de düzeltebilirsin.
+  - **Bounce tespiti güçlendirildi**: sistem artık gelen kutusunda çok daha geniş bir
+    gönderen/konu başlığı listesi tarıyor (mailer-daemon, postmaster, "Mail Delivery
+    Subsystem", "Undeliverable", "Delivery Status Notification", "Message blocked" ve
+    benzeri 20'den fazla varyasyon) — eskiden sadece 4 kalıp aranıyordu, bu yüzden
+    birçok gerçek bounce bildirimi hiç yakalanamıyordu. Ayrıca bir markadan gelen
+    "yanıt" gibi görünen ama aslında otomatik bir teslim-edilemedi bildirimi olan
+    mailler de artık ayırt edilip (yapay zeka tanımlıysa AI ile, değilse geniş bir
+    anahtar kelime listesiyle) doğru şekilde "Ulaşmayanlar"a düşüyor; eskiden bunlar
+    yanlışlıkla normal bir yanıt gibi sayılabiliyordu.
+  - **"Farklı adresten gelen yanıt" tespiti**: markanın kendi adresine gönderdik ama
+    şirketteki başka biri (satış temsilcisi, farklı bir departman vb.) FARKLI bir
+    adresten yanıtlamış olabilir — B2B outreach'te çok sık rastlanan bir durum, eskiden
+    sistem bunu hiç yakalayamıyordu (sadece tam eşleşen adresi arıyordu). Artık tam
+    eşleşme bulunamazsa aynı domain'den gelen mailler de denenir; bu şekilde bulunan
+    yanıtların özetine otomatik olarak "[Not: bu yanıt marka adresinin kendisinden
+    değil, aynı domain'deki farklı bir adresten geldi — kontrol et]" notu eklenir.
+  - **Kritik hata düzeltmesi — "0 bulundu" sorunu**: eskiden gelen kutusu taramasında
+    (bağlantı, kimlik doğrulama, tek bir mesajı okuyamama gibi) oluşan hatalar sessizce
+    yutuluyor, hiçbir yerde gösterilmiyordu — bu yüzden gerçekte yanıt/bounce olsa bile
+    ekranda "0 bulundu" görünebiliyordu ve neden olduğunu anlamak mümkün değildi. Artık
+    bu hatalar toplanıp **"Yanıtları Kontrol Et"** sonucunun altında kırmızı bir kutuda
+    açıkça listeleniyor. Ayrıca yanında yeni bir **"IMAP Bağlantısını Test Et"** butonu
+    var — sonuçlar hep 0 çıkıyorsa önce bunu dene: saniyeler içinde bağlantının gerçekten
+    kurulup kurulmadığını ve gelen kutusunda kaç mesaj/okunmamış mesaj olduğunu gösterir,
+    böylece sorunun bağlantıda mı yoksa arama kriterlerinde mi olduğunu ayırt edebilirsin.
+  - Not: hiçbir yöntem teslim edilemedi bildirimlerinin veya yanıtların %100'ünü
+    yakalayamaz (her mail sunucusu farklı formatta bildirim gönderebilir, bazı bounce
+    mesajları sadece HTML gövde içerebilir — bu durum da artık ayrıca ele alınıyor) —
+    kapsam önemli ölçüde genişledi ama garanti değil.
+- **Takip Listesi filtre sekmeleri**: "Tümü / ⏳ Yanıt Bekleniyor / 👍 Olumlu / 👎 Olumsuz /
+  ❓ Belirsiz / 📎 Belge Bekleyen" sekmeleriyle, her kategoriyi tek tıkla filtreleyip o
+  gruptaki markalara tek tek işlem yapabilirsin (yanıt tonunu düzelt, anlaşma aşamasını
+  ilerlet, belge gönderildi olarak işaretle vb.) — her sekmenin yanında kaç marka
+  olduğu yazar.
+- **📎 Belge/Onay İsteyen Markalar**: bir marka yanıtında iş lisansı, yeniden satış/bayilik
+  sertifikası, vergi kimlik no (EIN/Tax ID), W9 formu, ticaret sicil belgesi, vergi levhası
+  gibi bir belge/evrak istediğinde bu ayrı kartta listelenir (aynı zamanda ana takip
+  listesinde de "📎 Belge isteniyor" etiketiyle görünür). Anahtar kelime taraması ve,
+  ANTHROPIC_API_KEY tanımlıysa, yapay zeka analiziyle tespit edilir. İlgili belgeyi
+  gönderdikten sonra **"Belge Gönderildi, İşaretle"** ile listeden kaldırabilirsin.
 - Gönderdiğin tüm mailleri, ne zaman gönderildiğini ("3 gün önce" gibi) listeler
 - **"Yanıtları Kontrol Et"** butonuna bastığında Gmail gelen kutunu tarar, hangi markalardan
   yanıt geldiğini ve hangi maillerin **geri döndüğünü (bounce)** bulur, olumlu/olumsuz/belirsiz
-  tahmini yapar (kesin bir yapay zeka analizi değildir — özellikle "belirsiz" çıkanları elle
-  okuyup dropdown'dan düzeltmen önerilir). Geri dönen mailler otomatik olarak yukarıdaki
-  "Ulaşmayanlar" kartına düşer.
+  tahmini yapar. **ANTHROPIC_API_KEY tanımlıysa artık bu sınıflandırmayı yapay zeka (Claude
+  Haiku) yapıyor** — sadece olumlu/olumsuz/belirsiz değil, gerçek bir insan yanıtı mı yoksa
+  otomatik bir bounce/ofis-dışı yanıtı mı olduğunu ve bir belge talebi içerip içermediğini de
+  anlıyor; bu, sadece anahtar kelime eşleştirmesinden çok daha isabetli sonuç verir. API
+  anahtarı tanımlı değilse sistem eskisi gibi anahtar kelime listesiyle çalışmaya devam eder
+  (hiçbir şey bozulmaz, sadece daha kaba bir tahmin olur) — bu durumda özellikle "belirsiz"
+  çıkanları elle okuyup dropdown'dan düzeltmen önerilir. Geri dönen mailler otomatik olarak
+  yukarıdaki "Ulaşmayanlar" kartına, belge isteyenler "Belge/Onay İsteyen Markalar" kartına düşer.
 - Olumlu bir yanıt tespit edildiğinde, kendi mail adresine otomatik bir **bildirim maili**
   gönderir (bir markadan sadece bir kez bildirim gelir, tekrar tekrar gelmez)
 - **3 aşamalı otomatik takip**: yanıt gelmeyen markalara gönderim tarihinden itibaren

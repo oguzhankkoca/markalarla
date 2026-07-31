@@ -115,6 +115,12 @@ ensureColumn("brands", "storefront_url", "TEXT");
 // gönderildiyse bunu ayırt edebilmek için.
 ensureColumn("brands", "sent_via", "TEXT DEFAULT 'email'");
 
+// Gelen yanıt, ilerlemeden önce bir belge/evrak (iş lisansı, bayilik başvurusu,
+// vergi kimlik no vb.) istiyorsa işaretlenir — hem anahtar kelime hem de (varsa)
+// yapay zeka analiziyle tespit edilir.
+ensureColumn("brands", "document_requested", "INTEGER DEFAULT 0");
+ensureColumn("brands", "document_request_snippet", "TEXT");
+
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`
   UPDATE brands SET name_normalized = LOWER(TRIM(name))

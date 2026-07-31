@@ -465,7 +465,11 @@ async function runAutoSend() {
   if (sentTodayRow.c >= limit) return { sent: 0, reason: "limit_reached", sentToday: sentTodayRow.c };
 
   const candidate = db
-    .prepare(`SELECT * FROM brands WHERE status = 'found' AND email IS NOT NULL ORDER BY id ASC LIMIT 1`)
+    .prepare(
+      `SELECT * FROM brands WHERE status = 'found' AND email IS NOT NULL
+       AND (confidence IS NULL OR confidence != 'low')
+       ORDER BY id ASC LIMIT 1`
+    )
     .get();
   if (!candidate) return { sent: 0, reason: "no_candidates" };
 

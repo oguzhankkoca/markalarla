@@ -46,6 +46,7 @@
                 <th>Marka</th>
                 <th>Geri Dönen E-mail</th>
                 <th>Ne Zaman Gönderilmişti</th>
+                <th>Hata Mesajı</th>
                 <th>İşlem</th>
               </tr>
             </thead>
@@ -53,6 +54,30 @@
           </table>
           </div>
           <p class="muted" id="bouncedEmptyMsg">Şu an ulaşmayan (geri dönen) mail yok.</p>
+        </div>
+
+        <div class="card">
+          <h2>📎 Belge/Onay İsteyen Markalar <span class="filter-count" id="docRequestedCount">0</span></h2>
+          <p class="muted">
+            Bir marka yanıtında iş lisansı, yeniden satış/bayilik sertifikası, vergi kimlik
+            no (EIN/Tax ID), W9 formu gibi bir belge/evrak isterse (anahtar kelime taraması
+            ve, tanımlıysa, yapay zeka analiziyle tespit edilir) burada listelenir. İlgili
+            belgeyi gönderdikten sonra "Belge Gönderildi, İşaretle" ile listeden kaldırabilirsin.
+          </p>
+          <div style="overflow-x:auto;">
+          <table id="docRequestedTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>Gönderen</th>
+                <th>Yanıt Özeti</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="docRequestedBody"></tbody>
+          </table>
+          </div>
+          <p class="muted" id="docRequestedEmptyMsg">Şu an belge/evrak isteyen marka yok.</p>
         </div>
 
         <div class="card">
@@ -99,6 +124,7 @@
           <h2>📋 Takip Listesi</h2>
           <div class="toolbar">
             <button id="checkRepliesBtn">Yanıtları Kontrol Et</button>
+            <button id="imapTestBtn" class="secondary">IMAP Bağlantısını Test Et</button>
             <button id="exportBtn" class="secondary">Excel'e Aktar</button>
             <span class="muted" id="checkStatus"></span>
           </div>
@@ -107,7 +133,19 @@
             olumlu/olumsuz tahmini yapar (olumlu yanıtta sana ayrıca bildirim maili gider) ve zamanı
             gelen markalara sıradaki takip aşamasını otomatik gönderir. Bu özellik için Gmail
             hesabında IMAP açık olmalı (Gmail Ayarlar &gt; Yönlendirme ve POP/IMAP &gt; IMAP'i Etkinleştir).
+            Sonuçlar hep "0 bulundu" çıkıyorsa önce <b>"IMAP Bağlantısını Test Et"</b> ile bağlantının
+            gerçekten kurulup kurulamadığını ve gelen kutusunda kaç mesaj gördüğünü kontrol et — asıl
+            sorunun bağlantıda mı yoksa aramada mı olduğunu saniyeler içinde ayırt edersin.
           </p>
+          <div id="checkErrorsBox" class="error-box" style="display:none;"></div>
+          <div class="filter-tabs" id="trackFilterTabs">
+            <button class="track-filter-tab active" data-filter="all">Tümü <span class="filter-count" id="trackCountAll">0</span></button>
+            <button class="track-filter-tab" data-filter="waiting">⏳ Yanıt Bekleniyor <span class="filter-count" id="trackCountWaiting">0</span></button>
+            <button class="track-filter-tab" data-filter="positive">👍 Olumlu <span class="filter-count" id="trackCountPositive">0</span></button>
+            <button class="track-filter-tab" data-filter="negative">👎 Olumsuz <span class="filter-count" id="trackCountNegative">0</span></button>
+            <button class="track-filter-tab" data-filter="neutral">❓ Belirsiz <span class="filter-count" id="trackCountNeutral">0</span></button>
+            <button class="track-filter-tab" data-filter="document">📎 Belge Bekleyen <span class="filter-count" id="trackCountDocument">0</span></button>
+          </div>
           <div style="overflow-x:auto;">
           <table id="trackingTable">
             <thead>
@@ -118,7 +156,7 @@
                 <th>Takip Aşaması</th>
                 <th>Anlaşma Durumu</th>
                 <th>Not</th>
-                <th>Geçmiş</th>
+                <th>İşlem</th>
               </tr>
             </thead>
             <tbody id="trackingBody"></tbody>

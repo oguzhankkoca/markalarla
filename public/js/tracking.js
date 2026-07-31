@@ -1,5 +1,6 @@
 const trackingBody = document.getElementById("trackingBody");
 const bouncedBody = document.getElementById("bouncedBody");
+const docRequestedBody = document.getElementById("docRequestedBody");
 
 const DEAL_STAGE_LABELS = {
   new: "Yeni",
@@ -8,6 +9,71 @@ const DEAL_STAGE_LABELS = {
   deal_closed: "Anlaşma Yapıldı",
   rejected: "Reddedildi",
 };
+
+// Panel sayfasındaki ana mail şablonu — "Ulaşmayanlar" listesinde yeni bir
+// e-mail bulunduğunda, Panel sayfasına gitmeden direkt buradan gönderebilmek
+// için sayfa açılışında bir kez yükleyip burada tutuyoruz.
+let mainTemplate = null;
+
+// Takip Listesi'ndeki filtre sekmesi durumu + son yüklenen (bounce olmayan) liste.
+let currentTrackingFilter = "all";
+let lastRestList = [];
+
+function fillTemplateTracking(text, brandName) {
+  return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
+}
+
+async function loadMainTemplate() {
+  try {
+    const res = await fetch("/api/settings");
+    const data = await res.json();
+    const s = data.settings || {};
+    mainTemplate = { subject: s.main_subject || "", body: s.main_body || "" };
+  } catch (e) {
+    mainTemplate = null;
+  }
+}
+
+// "Ulaşmayanlar" listesinde yeni bir e-mail bulunduktan sonra, Panel sayfasına
+// gitmeye gerek kalmadan buradan direkt gönderim yapmak için.
+async function sendBrandNow(id, name, buttonEl) {
+  if (!mainTemplate || !mainTemplate.subject || !richTextToPlain(mainTemplate.body).trim()) {
+    alert(
+      "Önce Panel sayfasındaki '4️⃣ Mail şablonu' bölümünü doldurup kaydet — sonra buradan tek tıkla gönderebilirsin."
+    );
+    return;
+  }
+  if (buttonEl) {
+    buttonEl.disabled = true;
+    buttonEl.textContent = "Gönderiliyor...";
+  }
+  try {
+    const subject = fillTemplateTracking(mainTemplate.subject, name);
+    const body = fillTemplateTracking(mainTemplate.body, name);
+    const res = await fetch(`/api/brands/${id}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject, body }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert("Gönderim hatası: " + data.error);
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.textContent = "Şimdi Gönder";
+      }
+      return;
+    }
+    alert(`${name} markasına mail gönderildi.`);
+    loadTracking();
+  } catch (e) {
+    alert("Hata: " + e.message);
+    if (buttonEl) {
+      buttonEl.disabled = false;
+      buttonEl.textContent = "Şimdi Gönder";
+    }
+  }
+}
 
 function sentimentBadge(sentiment, replied, bounced) {
   if (bounced) return `<span class="badge bounced">Ulaşmadı (Geri Döndü)</span>`;
@@ -40,6 +106,56 @@ function sentimentSelect(brandId) {
     </select>`;
 }
 
+// Takip Listesi filtre sekmeleri: bir markanın hangi kategoriye girdiğini belirler.
+function matchesTrackingFilter(b, filter) {
+  switch (filter) {
+    case "all":
+      return true;
+    case "waiting":
+      return !b.replied;
+    case "positive":
+      return b.reply_sentiment === "positive";
+    case "negative":
+      return b.reply_sentiment === "negative";
+    case "neutral":
+      return Boolean(b.replied) && (!b.reply_sentiment || b.reply_sentiment === "neutral");
+    case "document":
+      return Boolean(b.document_requested);
+    default:
+      return true;
+  }
+}
+
+function renderTrackingFilterTabs(list) {
+  const counts = {
+    all: list.length,
+    waiting: list.filter((b) => !b.replied).length,
+    positive: list.filter((b) => b.reply_sentiment === "positive").length,
+    negative: list.filter((b) => b.reply_sentiment === "negative").length,
+    neutral: list.filter((b) => b.replied && (!b.reply_sentiment || b.reply_sentiment === "neutral")).length,
+    document: list.filter((b) => b.document_requested).length,
+  };
+  const idMap = {
+    all: "trackCountAll",
+    waiting: "trackCountWaiting",
+    positive: "trackCountPositive",
+    negative: "trackCountNegative",
+    neutral: "trackCountNeutral",
+    document: "trackCountDocument",
+  };
+  Object.entries(counts).forEach(([key, val]) => {
+    const el = document.getElementById(idMap[key]);
+    if (el) el.textContent = val;
+  });
+}
+
+// lastRestList'i mevcut filtreye göre süzüp tabloyu ve sekme sayaçlarını günceller.
+function applyTrackingFilter() {
+  renderTrackingFilterTabs(lastRestList);
+  const filtered = lastRestList.filter((b) => matchesTrackingFilter(b, currentTrackingFilter));
+  renderTracking(filtered);
+}
+
 function renderTracking(brands) {
   trackingBody.innerHTML = "";
   for (const b of brands) {
@@ -56,12 +172,16 @@ function renderTracking(brands) {
       <td>${sentAtText}</td>
       <td>
         ${sentimentBadge(b.reply_sentiment, b.replied, b.bounced)}
+        ${b.document_requested ? `<div><span class="badge pending">📎 Belge isteniyor</span></div>` : ""}
         <div>${sentimentSelect(b.id)}</div>
       </td>
       <td class="muted">${stageText}</td>
       <td>${dealStageSelect(b.id, b.deal_stage || "new")}</td>
       <td class="muted">${b.reply_snippet ? b.reply_snippet.slice(0, 120) + "..." : ""}</td>
-      <td><button class="small secondary history-btn" data-id="${b.id}" data-name="${b.name}">Geçmiş</button></td>
+      <td class="actions-cell">
+        <button class="small secondary history-btn" data-id="${b.id}" data-name="${b.name}">Geçmiş</button>
+        ${b.document_requested ? `<button class="small doc-done-btn-row" data-id="${b.id}" data-name="${b.name}">Belge Gönderildi</button>` : ""}
+      </td>
     `;
     trackingBody.appendChild(tr);
   }
@@ -79,6 +199,23 @@ function renderTracking(brands) {
         return `${date} — [${l.status}] ${l.message || ""}`;
       });
       alert(`${btn.dataset.name} gönderim geçmişi:\n\n${lines.join("\n")}`);
+    });
+  });
+
+  document.querySelectorAll(".doc-done-btn-row").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await fetch(`/api/tracking/${btn.dataset.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document_requested: false }),
+        });
+        loadTracking();
+      } catch (e) {
+        alert("Hata: " + e.message);
+        btn.disabled = false;
+      }
     });
   });
 
@@ -107,8 +244,8 @@ function renderTracking(brands) {
 
 // "Ulaşmayanlar" kartı: mail geri dönen (bounce) markaları ayrı ve öne çıkan bir
 // listede gösterir, her satırda sistemin o marka için yeni bir e-mail aramasını
-// tetikleyebileceğin bir buton olur. Bulunursa marka otomatik olarak bu listeden
-// kalkar (bounced sıfırlanır) ve Panel sayfasından tekrar gönderilebilir olur.
+// tetikleyebileceğin bir buton olur. Bulunursa (bounced sıfırlanır) satır içinde
+// hemen bir "Şimdi Gönder" seçeneği açılır — Panel sayfasına gitmeye gerek kalmaz.
 function renderBouncedTable(bouncedBrands) {
   bouncedBody.innerHTML = "";
   const countEl = document.getElementById("bouncedCount");
@@ -133,13 +270,16 @@ function renderBouncedTable(bouncedBrands) {
       <td>${b.name}</td>
       <td class="muted">${b.email || ""}</td>
       <td class="muted">${sentAtText}</td>
-      <td><button class="small research-btn" data-id="${b.id}" data-name="${b.name}">Tekrar E-mail Ara</button></td>
+      <td class="muted" style="max-width:280px;">${(b.last_error || "").slice(0, 300)}</td>
+      <td class="bounce-actions"><button class="small research-btn" data-id="${b.id}" data-name="${b.name}">Tekrar E-mail Ara</button></td>
     `;
     bouncedBody.appendChild(tr);
   }
 
   document.querySelectorAll(".research-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      const row = btn.closest("tr");
+      const actionsCell = row ? row.querySelector(".bounce-actions") : null;
       btn.disabled = true;
       btn.textContent = "Aranıyor...";
       try {
@@ -147,18 +287,77 @@ function renderBouncedTable(bouncedBrands) {
         const data = await res.json();
         if (!res.ok) {
           alert(data.error || "Aranamadı.");
+          btn.disabled = false;
+          btn.textContent = "Tekrar E-mail Ara";
           return;
         }
-        if (data.brand && data.brand.email) {
-          alert(`${btn.dataset.name} için yeni e-mail bulundu: ${data.brand.email}\n\nPanel sayfasından bu markaya tekrar gönderim yapabilirsin.`);
+        if (data.brand && data.brand.email && actionsCell) {
+          // Yeni e-mail bulundu — sayfadan ayrılmadan direkt gönderme seçeneği sun.
+          actionsCell.innerHTML = `
+            <div class="muted" style="margin-bottom:4px;">Yeni e-mail: <b>${data.brand.email}</b></div>
+            <button class="small send-now-btn" data-id="${btn.dataset.id}" data-name="${btn.dataset.name}">Şimdi Gönder</button>
+            <button class="small secondary dismiss-btn">Kapat</button>
+          `;
+          actionsCell.querySelector(".send-now-btn").addEventListener("click", (e) => {
+            sendBrandNow(btn.dataset.id, btn.dataset.name, e.target);
+          });
+          actionsCell.querySelector(".dismiss-btn").addEventListener("click", () => loadTracking());
         } else {
           alert(`${btn.dataset.name} için yeni bir e-mail bulunamadı. Panel sayfasından elle düzenleyebilirsin.`);
+          loadTracking();
         }
-        loadTracking();
       } catch (e) {
         alert("Hata: " + e.message);
         btn.disabled = false;
         btn.textContent = "Tekrar E-mail Ara";
+      }
+    });
+  });
+}
+
+// "Belge/Onay İsteyen Markalar" kartı: yanıtında bir belge/evrak talep eden markaları
+// ayrı listede öne çıkarır (bu markalar aynı zamanda aşağıdaki "Takip Listesi"nde de
+// görünmeye devam eder — burası sadece hızlı erişim için bir vitrin). "Belge Gönderildi"
+// butonu document_requested bayrağını sıfırlar, listeden kalkar.
+function renderDocRequestedTable(docBrands) {
+  docRequestedBody.innerHTML = "";
+  const countEl = document.getElementById("docRequestedCount");
+  const emptyMsg = document.getElementById("docRequestedEmptyMsg");
+  const table = document.getElementById("docRequestedTable");
+  if (countEl) countEl.textContent = docBrands.length;
+
+  if (docBrands.length === 0) {
+    if (table) table.style.display = "none";
+    if (emptyMsg) emptyMsg.style.display = "block";
+    return;
+  }
+  if (table) table.style.display = "";
+  if (emptyMsg) emptyMsg.style.display = "none";
+
+  for (const b of docBrands) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${b.name}</td>
+      <td class="muted">${b.reply_from || b.email || ""}</td>
+      <td class="muted">${(b.document_request_snippet || b.reply_snippet || "").slice(0, 160)}${(b.document_request_snippet || b.reply_snippet || "").length > 160 ? "..." : ""}</td>
+      <td><button class="small secondary doc-done-btn-card" data-id="${b.id}" data-name="${b.name}">Belge Gönderildi, İşaretle</button></td>
+    `;
+    docRequestedBody.appendChild(tr);
+  }
+
+  document.querySelectorAll(".doc-done-btn-card").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await fetch(`/api/tracking/${btn.dataset.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ document_requested: false }),
+        });
+        loadTracking();
+      } catch (e) {
+        alert("Hata: " + e.message);
+        btn.disabled = false;
       }
     });
   });
@@ -170,9 +369,21 @@ async function loadTracking() {
   const all = data.brands || [];
   const bounced = all.filter((b) => b.bounced || b.status === "bounced");
   const rest = all.filter((b) => !(b.bounced || b.status === "bounced"));
+  const docRequested = rest.filter((b) => b.document_requested);
   renderBouncedTable(bounced);
-  renderTracking(rest);
+  renderDocRequestedTable(docRequested);
+  lastRestList = rest;
+  applyTrackingFilter();
 }
+
+document.querySelectorAll(".track-filter-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    currentTrackingFilter = btn.dataset.filter;
+    document.querySelectorAll(".track-filter-tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    applyTrackingFilter();
+  });
+});
 
 async function loadFollowupTemplate() {
   const res = await fetch("/api/tracking/followup-template");
@@ -268,9 +479,22 @@ document.getElementById("saveFollowupBtn").addEventListener("click", async () =>
   alert("Takip şablonları kaydedildi.");
 });
 
+function renderCheckErrors(errors) {
+  const box = document.getElementById("checkErrorsBox");
+  if (!box) return;
+  if (!errors || errors.length === 0) {
+    box.style.display = "none";
+    box.textContent = "";
+    return;
+  }
+  box.style.display = "block";
+  box.textContent = `⚠️ Kontrol sırasında ${errors.length} hata oluştu (bunlar "0 bulundu" sonucunun asıl sebebi olabilir):\n\n` + errors.map((e) => `• ${e}`).join("\n");
+}
+
 document.getElementById("checkRepliesBtn").addEventListener("click", async () => {
   const statusEl = document.getElementById("checkStatus");
   statusEl.textContent = "Kontrol ediliyor, biraz sürebilir...";
+  renderCheckErrors(null);
   try {
     const res = await fetch("/api/tracking/check-replies", { method: "POST" });
     const data = await res.json();
@@ -278,10 +502,30 @@ document.getElementById("checkRepliesBtn").addEventListener("click", async () =>
       statusEl.textContent = "Hata: " + data.error;
       return;
     }
-    statusEl.textContent = `Kontrol edildi: ${data.checked} marka, ${data.repliesFound} yanıt bulundu, ${data.followUpsSent} takip maili gönderildi, ${data.notificationsSent} bildirim gönderildi.`;
+    statusEl.textContent = `Kontrol edildi: ${data.checked} marka, ${data.repliesFound} yanıt bulundu, ${data.bouncesFound || 0} mail geri döndü, ${data.documentsRequested || 0} belge istendi, ${data.followUpsSent} takip maili gönderildi, ${data.notificationsSent} bildirim gönderildi.`;
+    renderCheckErrors(data.errors);
     loadTracking();
   } catch (e) {
     statusEl.textContent = "Hata: " + e.message;
+  }
+});
+
+document.getElementById("imapTestBtn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("checkStatus");
+  statusEl.textContent = "IMAP bağlantısı test ediliyor...";
+  renderCheckErrors(null);
+  try {
+    const res = await fetch("/api/tracking/imap-test");
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      statusEl.textContent = "IMAP bağlantı hatası.";
+      renderCheckErrors([data.error || "Bilinmeyen hata."]);
+      return;
+    }
+    statusEl.textContent = `✅ IMAP bağlantısı başarılı — ${data.user} hesabında gelen kutusunda ${data.totalMessages} mesaj, ${data.unseen} okunmamış. Bağlantı çalışıyorsa ama "Yanıtları Kontrol Et" hâlâ 0 buluyorsa, sorun muhtemelen arama kriterleriyle ilgilidir (bu durumda bana haber ver).`;
+  } catch (e) {
+    statusEl.textContent = "IMAP test hatası.";
+    renderCheckErrors([e.message]);
   }
 });
 
@@ -291,4 +535,5 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 
 wireRichTextToolbars();
 loadFollowupTemplate();
+loadMainTemplate();
 loadTracking();

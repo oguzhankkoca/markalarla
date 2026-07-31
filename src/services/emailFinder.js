@@ -151,20 +151,41 @@ function coreBrandTokens(brandName) {
     .filter((w) => w && !COMPANY_SUFFIXES.includes(w));
 }
 
+// Bu kelimeler o kadar sık marka isminin bir parçası olarak kullanılır ki (ör. "XYZ
+// Shop", "ABC Home", "Nature Life") TEK BAŞINA bir domain eşleşmesi için güvenilir
+// bir sinyal değildir — "shop.com", "homegoods.net" gibi tamamen alakasız bir site de
+// tesadüfen bu kelimeyi içerebilir. Marka adının ana (ayırt edici) kelimesi bunlardan
+// biriyse, tek başına yeterli saymıyoruz; en az bir ek token da eşleşmeli.
+const GENERIC_BRAND_WORDS = [
+  "shop", "store", "life", "home", "world", "care", "plus", "pro", "kids",
+  "baby", "beauty", "health", "style", "fashion", "kitchen", "house", "goods",
+  "market", "collection", "studio", "design", "official", "direct", "online",
+  "supply", "supplies", "outlet", "depot", "hub", "one", "prime", "elite",
+  "premium", "select", "choice", "best", "top", "first", "new", "modern",
+];
+
 // Bulunan domain'in gerçekten aranan markaya ait olup olmadığını kabaca kontrol eder.
 // Kesin bir doğrulama değildir ama "alakasız bir siteyi markanın sitesi sanma" hatasının
-// önüne büyük ölçüde geçer.
+// önüne büyük ölçüde geçer. Hata oranını en aza indirmek için: tam isim eşleşmesi kısa
+// (4 karakterden az) markalarda yanıltıcı olabileceğinden en az 4 karakter şartı arandı,
+// ve tek bir "genel" kelimeye (bkz. GENERIC_BRAND_WORDS) güvenmek yerine böyle durumlarda
+// en az iki token'ın eşleşmesi isteniyor.
 function domainMatchesBrand(domain, brandName) {
   const coreDomain = normalizeForMatch((domain || "").split(".")[0]);
   if (!coreDomain) return false;
   const normBrandFull = normalizeForMatch(brandName);
-  if (normBrandFull && (coreDomain.includes(normBrandFull) || normBrandFull.includes(coreDomain))) {
+  if (normBrandFull && normBrandFull.length >= 4 && (coreDomain.includes(normBrandFull) || normBrandFull.includes(coreDomain))) {
     return true;
   }
   const tokens = coreBrandTokens(brandName).sort((a, b) => b.length - a.length);
   const mainToken = tokens[0];
-  if (mainToken && mainToken.length >= 3 && coreDomain.includes(mainToken)) return true;
-  return false;
+  if (!mainToken || mainToken.length < 3) return false;
+  if (!coreDomain.includes(mainToken)) return false;
+  if (GENERIC_BRAND_WORDS.includes(mainToken)) {
+    const matchedTokenCount = tokens.filter((t) => t.length >= 3 && coreDomain.includes(t)).length;
+    return matchedTokenCount >= 2;
+  }
+  return true;
 }
 
 const httpClient = axios.create({
@@ -275,9 +296,12 @@ function extractCandidates(results, sourceName, trace) {
 }
 
 // Arama sonuçları arasından Claude'a "bunlardan hangisi gerçekten bu markanın resmi
-// sitesi?" diye sorar. Yalnızca heuristik (kelime eşleştirme) emin olamadığında
-// çağrılır — kolay/net eşleşmelerde AI'a hiç gidilmez, böylece hem hızlı kalır hem
-// de gereksiz API maliyeti oluşmaz.
+// sitesi?" diye sorar. Artık AI tanımlıysa ve birden fazla aday varsa HER ZAMAN
+// çağrılır (sadece heuristik belirsiz kaldığında değil) — çünkü heuristik bazen
+// yanlış adayı "eşleşti" diye öne çıkarabilir (ör. iki aday da marka adının bir
+// kısmını içeriyor olabilir, ama sadece biri gerçek). Amaç: yanlış siteye/e-maile
+// gitme hata oranını mümkün olduğunca aza indirmek — bunun karşılığında biraz daha
+// fazla API çağrısı/gecikme kabul ediliyor.
 async function pickBestDomainWithAI(brandName, candidates, trace) {
   if (!ai.isConfigured() || candidates.length === 0) return null;
   const list = candidates
@@ -288,15 +312,26 @@ async function pickBestDomainWithAI(brandName, candidates, trace) {
       return `${i + 1}. ${bits.join(" | ")}`;
     })
     .join("\n");
-  const prompt = `Bir Amazon toptan satış şirketi için marka web sitesi doğrulaması yapıyorsun.
+  const prompt = `Bir Amazon toptan satış/distribütörlük şirketi için marka web sitesi doğrulaması
+yapıyorsun. Bu doğrulama YANLIŞ bir siteye iş teklifi maili gitmesini önlemek için kritik önemde —
+son derece dikkatli ve şüpheci ol.
+
 Aranan marka: "${brandName}"
 
 Google arama sonuçlarından bulunan aday domainler:
 ${list}
 
-Bu adaylardan hangisi "${brandName}" markasının GERÇEK, RESMİ web sitesidir? Sosyal medya,
-pazar yeri (Amazon/eBay/Trendyol/Etsy vb.), haber sitesi, inceleme/dizin sitesi ya da tamamen
-alakasız bir şirketse SEÇME. Emin değilsen index'i null bırak, tahmin yürütme.
+Bu adaylardan hangisi "${brandName}" markasının GERÇEK, RESMİ kurumsal web sitesidir? Şunlara
+özellikle dikkat et:
+- Sosyal medya, pazar yeri (Amazon/eBay/Trendyol/Etsy vb.), haber/blog sitesi, inceleme/dizin
+  sitesi ya da tamamen alakasız bir şirketse SEÇME.
+- Benzer/kısmen aynı isimli ama FARKLI bir şirket olabilir (ör. "Nature's Bounty" ile
+  "Nature's Way" farklı şirketlerdir) — sadece isim benzerliğine değil, sayfa
+  içeriğinin/ürünlerinin gerçekten bu markayla örtüşüp örtüşmediğine bak.
+- Parked/expired domain, jenerik bir şablon mağaza, ya da markayla hiç ilgisi olmayan bir
+  içerik varsa SEÇME.
+- Emin değilsen index'i null bırak, tahmin yürütme — yanlış bir seçim yapmaktansa hiç seçim
+  yapmamak daha iyidir.
 
 Sadece şu JSON formatında cevap ver, başka hiçbir açıklama ekleme:
 {"index": <1'den başlayan aday numarası ya da null>, "confidence": "high"|"medium"|"low", "reason": "kısa Türkçe açıklama"}`;
@@ -332,18 +367,27 @@ async function rankCandidateDomains(candidates, sourceName, brandName, trace) {
   const unmatched = candidates.filter((c) => !domainMatchesBrand(c.domain, brandName));
   let ordered = [...matched, ...unmatched];
 
-  // Heuristik hiçbir adayı net eşleştiremediyse (marka adı hiçbir domain'de
-  // görünmüyorsa), AI tanımlıysa ikinci bir görüş alıp onun seçimini listenin başına alıyoruz.
-  if (matched.length === 0 && ai.isConfigured()) {
-    const aiPick = await pickBestDomainWithAI(brandName, candidates, trace);
-    if (aiPick && aiPick.domain) {
-      trace.push(`${sourceName}: AI'ın seçimi heuristikten daha güvenilir kabul edildi, öne alınıyor.`);
-      ordered = [{ domain: aiPick.domain }, ...ordered.filter((c) => c.domain !== aiPick.domain)];
-    }
-  }
-
   if (matched.length > 0) {
     trace.push(`${sourceName}: marka adıyla örtüşen adaylar önce denenecek: ${matched.map((c) => c.domain).join(", ")}`);
+  }
+
+  // AI tanımlıysa VE birden fazla aday varsa, heuristik bir eşleşme bulmuş olsa BİLE
+  // ikinci bir görüş olarak her zaman çalıştırılır — sadece heuristik hiçbir şey
+  // bulamadığında değil. Heuristik bazen YANLIŞ adayı "eşleşti" diye öne çıkarabilir
+  // (iki aday da marka adının bir kısmını içeriyor olabilir, sadece biri gerçek resmi
+  // site olabilir); bu yüzden kullanıcının istediği düşük hata oranı için AI'ın son
+  // sözü söylemesine izin veriyoruz.
+  if (ai.isConfigured() && candidates.length > 1) {
+    const aiPick = await pickBestDomainWithAI(brandName, candidates, trace);
+    if (aiPick && aiPick.domain && aiPick.confidence !== "low") {
+      trace.push(`${sourceName}: AI'ın seçimi öne alınıyor (${aiPick.domain}, güven: ${aiPick.confidence}).`);
+      ordered = [{ domain: aiPick.domain }, ...ordered.filter((c) => c.domain !== aiPick.domain)];
+    } else if (aiPick === null && matched.length === 0) {
+      // AI da hiçbir adayı seçemediyse ve heuristik de eşleşme bulamadıysa, bu arama
+      // sonucu grubunun muhtemelen hiç doğru aday içermediğini not düş (verifyCandidateList
+      // yine de ilk 3'ü dener, ama trace'te bu belirsizlik görünür kalsın).
+      trace.push(`${sourceName}: ne heuristik ne de AI net bir aday seçebildi — bu gruptaki adaylar şüpheli.`);
+    }
   }
 
   const seen = new Set();
@@ -404,12 +448,11 @@ async function searchViaSerper(brandName, trace, query) {
       trace.push(`Serper.dev ("${query}") 200 döndü ama organic sonuç boş.`);
       return null;
     }
-    const candidates = extractCandidates(
+    return extractCandidates(
       results.map((r) => ({ url: r.link, title: r.title, snippet: r.snippet })),
       "Serper.dev",
       trace
     );
-    return rankCandidateDomains(candidates, "Serper.dev", brandName, trace);
   } catch (e) {
     trace.push(`Serper.dev istek hatası: ${e.message}`);
     return null;
@@ -452,12 +495,11 @@ async function searchViaSerpApi(brandName, trace, query) {
       trace.push(`SerpAPI ("${query}") 200 döndü ama organic_results boş.`);
       return null;
     }
-    const candidates = extractCandidates(
+    return extractCandidates(
       results.map((r) => ({ url: r.link, title: r.title, snippet: r.snippet })),
       "SerpAPI",
       trace
     );
-    return rankCandidateDomains(candidates, "SerpAPI", brandName, trace);
   } catch (e) {
     trace.push(`SerpAPI istek hatası: ${e.message}`);
     return null;
@@ -501,7 +543,7 @@ async function searchViaDuckDuckGo(brandName, trace, query, attempt = 1) {
       trace.push(`DuckDuckGo sonuçları sosyal medya/pazar yeri/dizin siteleriydi, atlandı: ${skippedDdg.join(", ")}`);
     }
     if (candidatesDdg.length > 0) {
-      return rankCandidateDomains(candidatesDdg, "DuckDuckGo", brandName, trace);
+      return candidatesDdg;
     }
     if (skippedDdg.length === 0) {
       trace.push(`DuckDuckGo ("${query}") yanıt ${status} ama sonuç linki yok (muhtemelen bot engeli).`);
@@ -548,22 +590,38 @@ async function findOfficialDomainViaSearch(brandName, trace) {
       trace.push(`Önceki arama ifadesi hiç doğrulanabilir sonuç vermedi, farklı bir ifadeyle tekrar deneniyor: "${query}"`);
     }
 
-    const providerDomains = [];
+    // Üç sağlayıcının HAM (henüz sıralanmamış) adaylarını topluyoruz, sonra hepsini
+    // TEK BİR AI/heuristik sıralama geçişinden birlikte geçiriyoruz. Eskiden her
+    // sağlayıcı kendi listesini ayrı ayrı sıralıyordu (ve AI'ya ayrı ayrı soruluyordu);
+    // artık AI, o arama ifadesi için bulunan TÜM adayları bir arada görüyor — bu hem
+    // daha isabetli bir seçim yapmasını sağlıyor hem de gereksiz tekrarlı AI çağrısını
+    // önlüyor.
+    const rawCandidates = [];
     // 1) Serper.dev (tanımlıysa, dolar başına en verimli seçenek)
     const viaSerper = await searchViaSerper(brandName, trace, query);
-    if (viaSerper) providerDomains.push(...viaSerper);
+    if (viaSerper) rawCandidates.push(...viaSerper);
 
     // 2) SerpAPI (tanımlıysa)
     const viaSerpApi = await searchViaSerpApi(brandName, trace, query);
-    if (viaSerpApi) providerDomains.push(...viaSerpApi);
+    if (viaSerpApi) rawCandidates.push(...viaSerpApi);
 
     // 3) Ücretsiz fallback: DuckDuckGo
     const viaDdg = await searchViaDuckDuckGo(brandName, trace, query);
-    if (viaDdg) providerDomains.push(...viaDdg);
+    if (viaDdg) rawCandidates.push(...viaDdg);
 
-    if (providerDomains.length === 0) continue;
+    if (rawCandidates.length === 0) continue;
 
-    const uniqueDomains = [...new Set(providerDomains)];
+    // Aynı domain birden fazla sağlayıcıdan gelmiş olabilir — ilk görülen title/snippet'i
+    // koruyarak tekilleştir.
+    const seenDomains = new Set();
+    const dedupedCandidates = [];
+    for (const c of rawCandidates) {
+      if (seenDomains.has(c.domain)) continue;
+      seenDomains.add(c.domain);
+      dedupedCandidates.push(c);
+    }
+
+    const uniqueDomains = await rankCandidateDomains(dedupedCandidates, "arama sonuçları", brandName, trace);
     const verified = await verifyCandidateList(brandName, uniqueDomains, trace);
     if (verified) return verified;
 
@@ -680,14 +738,21 @@ async function scrapePage(url, trace) {
 async function verifyHomepageWithAI(brandName, domain, pageTitle, pageText, trace) {
   if (!ai.isConfigured()) return null;
   const prompt = `"${domain}" adresindeki bir web sitesinin "${brandName}" markasının GERÇEK
-resmi/kurumsal sitesi olup olmadığını değerlendiriyorsun.
+resmi/kurumsal sitesi olup olmadığını değerlendiriyorsun. Bu bir Amazon toptan satış/distribütörlük
+şirketinin iş teklifi maili göndereceği adresi belirlemek için kritik bir kontrol — yanlış siteyi
+onaylarsan mail tamamen alakasız bir şirkete/kişiye gidebilir, bu yüzden dikkatli ve şüpheci ol.
 
 Sayfa başlığı: ${pageTitle || "(yok)"}
-Sayfa içeriğinden örnek metin: ${(pageText || "").slice(0, 800) || "(yok)"}
+Sayfa içeriğinden örnek metin: ${(pageText || "").slice(0, 1200) || "(yok)"}
 
 Bu site "${brandName}" markasının resmi sitesi mi? Marka adı sayfada birebir geçmese bile,
-içerik/ürünler/başlık markayla açıkça örtüşüyorsa evet diyebilirsin. Emin değilsen confidence
-"low" ver.
+içerik/ürünler/başlık markayla açıkça örtüşüyorsa evet diyebilirsin. Ama şunlara dikkat et:
+- Benzer isimli ama FARKLI bir şirket olabilir — sadece isim benzerliğine değil, sayfanın
+  gerçekten bu markayla mı ilgili olduğuna bak.
+- Parked/expired domain, satılık domain sayfası, jenerik bir şablon/placeholder sayfa, ya da
+  markayla hiç ilgisi olmayan bir içerikse "is_official": false ver.
+- Sayfa boş/çok az bilgi içeriyorsa ya da emin olamıyorsan confidence "low" ver, "is_official"ı
+  yine de en olası tahminine göre işaretle.
 
 Sadece şu JSON formatında cevap ver, başka açıklama ekleme:
 {"is_official": true|false, "confidence": "high"|"medium"|"low", "reason": "kısa Türkçe açıklama"}`;
@@ -720,21 +785,35 @@ async function verifyDomainIsBrand(brandName, domain, trace) {
   const mainToken = coreBrandTokens(brandName).sort((a, b) => b.length - a.length)[0];
   const heuristicRelated = !(mainToken && mainToken.length >= 3 && !normPageText.includes(mainToken));
 
+  // ÖNEMLİ: AI tanımlıysa artık HER ZAMAN ikinci bir görüş olarak çalıştırılır —
+  // heuristik "marka adı sayfada geçiyor" dese bile. Bunun sebebi: heuristik sadece
+  // bir kelimenin sayfada geçip geçmediğine bakıyor, bu YANLIŞ POZİTİF üretebilir
+  // (ör. marka adı sayfada bir referans/karşılaştırma olarak geçebilir, ya da kısa/
+  // genel bir kelime tesadüfen eşleşebilir). Kullanıcı hata oranını en aza indirmek
+  // istediği için, AI mevcutsa onun nihai kararına güveniyoruz; AI yoksa (ya da
+  // yanıt veremezse) eskisi gibi heuristiğe geri dönüyoruz.
+  if (ai.isConfigured()) {
+    const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace);
+    if (aiVerdict) {
+      if (!aiVerdict.is_official) {
+        trace.push(`"${domain}" reddedildi: AI bu sitenin "${brandName}" markasına ait olmadığını düşünüyor, başka bir aday deneniyor.`);
+        return { ok: false, confidence: "low" };
+      }
+      if (aiVerdict.confidence === "low") {
+        // AI "resmi ama emin değilim" diyor. Heuristik de destekliyorsa orta güvenle
+        // kabul et, desteklemiyorsa düşük güvenle işaretle (reddetme, ama panelde uyar).
+        return { ok: true, confidence: heuristicRelated ? "medium" : "low" };
+      }
+      return { ok: true, confidence: heuristicRelated ? "high" : "medium" };
+    }
+    trace.push(`AI'dan yanıt alınamadı (${domain}), heuristiğe geri dönülüyor.`);
+  }
+
   if (heuristicRelated) {
     return { ok: true, confidence: "high" };
   }
 
-  trace.push(`Uyarı: "${brandName}" adı ${domain} ana sayfasında geçmiyor, ek doğrulama yapılıyor...`);
-  const aiVerdict = await verifyHomepageWithAI(brandName, domain, home.title, home.text, trace);
-  if (aiVerdict) {
-    if (aiVerdict.is_official && aiVerdict.confidence !== "low") {
-      return { ok: true, confidence: "medium" };
-    }
-    if (!aiVerdict.is_official) {
-      trace.push(`"${domain}" reddedildi: bu site markaya ait görünmüyor, başka bir aday deneniyor.`);
-      return { ok: false, confidence: "low" };
-    }
-  }
+  trace.push(`Uyarı: "${brandName}" adı ${domain} ana sayfasında geçmiyor ve AI ile teyit edilemedi.`);
 
   // AI tanımlı değil ya da net bir görüş veremedi: tamamen reddetmek yerine düşük
   // güvenle kabul ediyoruz — aksi halde AI olmadan az bilinen/küçük markaların çoğu

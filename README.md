@@ -114,6 +114,31 @@ işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
      e-mailin altında kırmızı **"⚠️ düşük güven — bu site markaya ait olmayabilir,
      kontrol et"** notu görünür. Bu notu gördüğün markaları göndermeden önce mutlaka
      elle kontrol et; hiç görmediğin markalarda sistem zaten kendinden emin demektir.
+   - **Yapay zeka artık her adımda ZORUNLU bir ikinci görüş olarak çalışıyor (ANTHROPIC_API_KEY
+     tanımlıysa).** Eskiden AI sadece heuristik (kelime eşleştirme) belirsiz kaldığında devreye
+     giriyordu; bu, heuristiğin YANLIŞLIKLA "eşleşti" dediği durumlarda (ör. iki farklı aday
+     domain de marka adının bir kısmını içeriyorsa, ama sadece biri gerçek resmi site) hiç
+     kontrol edilmemesine yol açıyordu. Artık iki noktada AI'ın onayı isteniyor:
+     1) **Aday seçimi**: bir arama ifadesi için Serper/SerpAPI/DuckDuckGo'dan gelen TÜM adaylar
+        birleştirilip AI'a birlikte gösteriliyor (eskiden her sağlayıcı ayrı ayrı sorulurdu);
+        AI, heuristiğin hangi adayı önerdiğine bakmaksızın kendi bağımsız değerlendirmesini
+        yapıyor ve gerekirse sırayı değiştiriyor.
+     2) **Ana sayfa doğrulaması**: seçilen domain'in ana sayfası, heuristik "marka adı geçiyor"
+        dese bile AI'a tekrar soruluyor — benzer isimli ama farklı bir şirket, parked/expired
+        domain ya da jenerik bir şablon mağaza olup olmadığını AI ayırt etmeye çalışıyor.
+     Bu, doğruluğu belirgin şekilde artırır ama her marka için birden fazla ek AI çağrısı
+     anlamına gelir — yani arama biraz daha yavaş çalışır ve (Anthropic API kullanım ücreti
+     üzerinden) biraz daha maliyetli olur. ANTHROPIC_API_KEY tanımlı değilse sistem eskisi gibi
+     sadece heuristikle çalışmaya devam eder, hiçbir şey bozulmaz — ama bu durumda AI'ın
+     sağladığı ekstra doğruluk artışından yararlanamazsın. **Hata oranını gerçekten en aza
+     indirmek istiyorsan bir Anthropic API anahtarı edinip Render'da ANTHROPIC_API_KEY olarak
+     tanımlamanı öneririm** (https://console.anthropic.com — ayrı, kullandıkça öder bir hesap;
+     Haiku modeli ucuzdur).
+   - **Marka adının "genel" bir kelimeye dayandığı durumlarda yanlış eşleşme riski azaltıldı.**
+     "Shop", "Home", "Life", "Care", "Plus" gibi çok yaygın kelimeler tek başına artık güvenilir
+     bir eşleşme sinyali sayılmıyor (ör. "Modern Life" markası için "modernguitars.com" gibi
+     alakasız bir site, sadece "modern" kelimesini içerdiği için eskiden yanlışlıkla eşleşebilirdi)
+     — böyle durumlarda en az iki kelimenin (ya da tam marka adının) domain'de geçmesi aranıyor.
    - **Hunter.io'nun kendi e-mail güven skoru artık kullanılıyor.** Hunter.io her bulduğu
      e-mail için kendi içinde 0-100 arası bir güven puanı veriyor (bu adres gerçekten
      çalışıyor mu, doğrulanmış mı gibi sinyallerden hesaplıyor); eskiden bu puan hiç

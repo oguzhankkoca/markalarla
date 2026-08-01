@@ -21,11 +21,32 @@
             <span class="nav-subtitle">Günün özeti & odağı</span>
           </span>
         </a>
-        <a href="/index.html" class="nav-link active">
-          <span class="nav-icon">🔍</span>
+        <a href="/index.html#marka-listesi" class="nav-link" data-view="marka-listesi">
+          <span class="nav-icon">📋</span>
           <span class="nav-text">
-            <span class="nav-title">Marka Keşif</span>
-            <span class="nav-subtitle">Liste yükle & e-posta bul</span>
+            <span class="nav-title">Marka Listesi</span>
+            <span class="nav-subtitle">Filtrele, seç, gönder</span>
+          </span>
+        </a>
+        <a href="/index.html#marka-ekle" class="nav-link" data-view="marka-ekle">
+          <span class="nav-icon">📤</span>
+          <span class="nav-text">
+            <span class="nav-title">Yeni Marka Ekle</span>
+            <span class="nav-subtitle">Excel yükle & e-posta bul</span>
+          </span>
+        </a>
+        <a href="/index.html#mail-sablonu" class="nav-link" data-view="mail-sablonu">
+          <span class="nav-icon">✉️</span>
+          <span class="nav-text">
+            <span class="nav-title">Mail Şablonu</span>
+            <span class="nav-subtitle">Konu, içerik, A/B varyant</span>
+          </span>
+        </a>
+        <a href="/index.html#crm-pipeline" class="nav-link" data-view="crm-pipeline">
+          <span class="nav-icon">🧭</span>
+          <span class="nav-text">
+            <span class="nav-title">CRM Pipeline</span>
+            <span class="nav-subtitle">Aşama bazlı görünüm</span>
           </span>
         </a>
         <a href="/tracking.html" class="nav-link">
@@ -35,6 +56,16 @@
             <span class="nav-subtitle">Gelen & olumlu dönüşler</span>
           </span>
           <span class="nav-badge" id="navMailBadge" style="display:none;">0</span>
+        </a>
+      </nav>
+      <div class="nav-section-label">Yönetim</div>
+      <nav>
+        <a href="/index.html#ayarlar" class="nav-link" data-view="ayarlar">
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-text">
+            <span class="nav-title">Ayarlar</span>
+            <span class="nav-subtitle">Profil, DNS, limit, kara liste</span>
+          </span>
         </a>
       </nav>
       <div class="sidebar-footer" id="emailStatus"></div>
@@ -50,8 +81,8 @@
 
         <div class="page-header">
           <div>
-            <h1>Marka Outreach Paneli</h1>
-            <p>Marka listeni yükle, e-mailleri bul, şablonunu hazırla ve gönder.</p>
+            <h1 id="pageTitle">Marka Listesi</h1>
+            <p id="pageSubtitle">Marka listeni filtrele, seç ve gönder.</p>
           </div>
           <div class="credits-panel" id="creditsPanel">
             <div class="credits-panel-title">🔑 API Kredileri</div>
@@ -59,110 +90,10 @@
           </div>
         </div>
 
-        <div class="card">
-          <h2>1️⃣ Bilgilerin (mail imzası için)</h2>
-          <input type="text" id="settingsName" placeholder="Adın soyadın" />
-          <input type="text" id="settingsCompany" placeholder="Şirket adın" />
-          <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
-          <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
-          <input type="text" id="settingsCompanyAddress" placeholder="Şirket fiziksel adresi (CAN-SPAM yasası gereği zorunlu, her mailin altına otomatik eklenir)" />
-          <button id="saveSettingsBtn" class="secondary">Kaydet</button>
-          <button id="backupNowBtn" class="secondary" title="Her Pazartesi otomatik gider; hemen bir yedek almak için buna basabilirsin" style="margin-left:8px;">💾 Şimdi Yedekle</button>
-          <span class="muted" id="backupStatus" style="margin-left:8px;"></span>
-        </div>
-
-        <div class="card">
-          <h2>🔍 SPF / DKIM / DMARC Kontrolü</h2>
-          <p class="muted">Mailin spam'e düşmemesi için en kritik üç DNS kaydını canlı olarak sorgular — README'deki kurulum talimatını uyguladıktan sonra gerçekten doğru kurulup kurulmadığını burada doğrulayabilirsin.</p>
-          <button id="checkDnsHealthBtn" class="secondary">Şimdi Kontrol Et</button>
-          <div id="dnsHealthResult" style="margin-top:10px;"></div>
-        </div>
-
-        <div class="card">
-          <h2>🚫 Kalıcı "Bir Daha Yazma" Listesi</h2>
-          <p class="muted">Biri açıkça "unsubscribe" / "bir daha yazma" dediğinde otomatik eklenir; marka kaydı silinse/yeniden yüklense bile bu adrese bir daha ASLA mail gitmez. Buradan elle de ekleyip çıkarabilirsin.</p>
-          <div style="display:flex; gap:8px; margin-bottom:10px;">
-            <input type="email" id="suppressionEmailInput" placeholder="ornek@marka.com" style="flex:1;" />
-            <button id="addSuppressionBtn" class="secondary">Ekle</button>
-          </div>
-          <div id="suppressionList" class="muted">Yükleniyor...</div>
-        </div>
-
-        <div class="card">
-          <h2>2️⃣ Marka listesi yükle (Excel/CSV)</h2>
-          <p class="muted">Dosyada marka adlarının olduğu bir sütun olmalı (örn: "Marka", "Brand"). İsteğe bağlı web sitesi sütunu da ekleyebilirsin.</p>
-          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
-          <button id="uploadBtn">Yükle</button>
-          <span class="muted" id="uploadStatus"></span>
-        </div>
-
-        <div class="card">
-          <h2>3️⃣ E-mail bulma</h2>
-          <div class="toolbar">
-            <button id="findAllBtn">Tüm markalar için email ara</button>
-            <button id="stopFindAllBtn" class="secondary" disabled>Durdur</button>
-            <button id="resumeFindAllBtn" class="secondary" disabled>Devam Et</button>
-            <span class="muted" id="findStatus"></span>
-          </div>
-          <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt.</p>
-        </div>
-
-        <div class="card">
-          <h2>4️⃣ Mail şablonu</h2>
-          <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
-          <p class="muted" style="margin-top:-6px;">Başka bir yerden (Word, Google Docs, başka bir mail) kopyaladığın metni doğrudan aşağıya yapıştırabilirsin — kalın/italik/liste gibi biçimlendirme korunur.</p>
-          <div class="rte-toolbar" data-target="bodyInput">
-            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
-            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
-            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
-            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
-            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
-          </div>
-          <div id="bodyInput" class="rich-editor" contenteditable="true" data-placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></div>
-          <div id="qualityScoreBadge" class="quality-score-badge" style="display:none;"></div>
-          <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
-        </div>
-
-        <div class="card">
-          <h2>5️⃣ Günlük otomatik gönderim limiti (opsiyonel)</h2>
-          <p class="muted">
-            400 marka gibi büyük bir listeyi tek seferde göndermek yerine, günde en fazla
-            kaç mail gönderileceğini buradan sınırlayabilirsin. 0 bırakırsan otomatik
-            gönderim kapalı olur (sadece elle/seçerek gönderirsin). Bir sayı girersen,
-            sistem her gün o kadarını 08:00-20:00 (UTC) arasına yayarak kendiliğinden
-            gönderir — art arda patlatmadığı için spam'e düşme riski azalır.
-          </p>
-          <input type="number" id="dailyLimitInput" min="0" placeholder="Örn: 60" style="max-width:160px;" />
-          <button id="saveDailyLimitBtn" class="secondary">Kaydet</button>
-
-          <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
-          <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
-            <input type="checkbox" id="warmupEnabledCheckbox" style="width:auto; margin-top:3px;" />
-            <span>
-              <strong>Kademeli ısınma (warm-up)</strong> — yukarıdaki limite tek seferde değil,
-              haftalık kademeli artarak ulaş (yeni/az kullanılan bir gönderim düzeninde
-              birden yüksek hacim spam filtrelerinde şüphe uyandırabilir).
-            </span>
-          </label>
-          <div id="warmupFields" style="display:none; margin-top:8px; align-items:center; gap:8px;">
-            <label class="muted">Başlangıç: <input type="number" id="warmupStartLimitInput" min="1" style="max-width:90px;" value="10" /></label>
-            <label class="muted">Haftalık artış: <input type="number" id="warmupIncrementInput" min="1" style="max-width:90px;" value="10" /></label>
-            <button id="saveWarmupBtn" class="secondary">Kaydet</button>
-            <span class="muted" id="warmupStatus"></span>
-          </div>
-          <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
-            <input type="checkbox" id="rewarmEnabledCheckbox" style="width:auto; margin-top:3px;" />
-            <span>
-              <strong>Soğuk markaları otomatik yeniden dene</strong> (varsayılan kapalı) — hiç yanıt
-              vermeden 3 takip aşamasını da tamamlayan markalara 120 gün, olumsuz yanıt verenlere ise
-              180 gün sonra otomatik olarak bir şans daha verir (her markaya en fazla 2 kez). Kalıcı
-              "bir daha yazma" listesindeki adresler bundan her zaman muaf tutulur.
-            </span>
-          </label>
-        </div>
-
+        <!-- ================= MARKA LİSTESİ ================= -->
+        <section class="view" data-view="marka-listesi" id="view-marka-listesi">
         <div class="card card-wide">
-          <h2>6️⃣ Markalar ve gönderim</h2>
+          <h2>📋 Markalar ve gönderim</h2>
           <div class="toolbar">
             <button id="sendSelectedBtn">Seçilenleri Gönder</button>
             <button id="sendAllBtn" class="secondary">Bulunan tüm e-maillere gönder</button>
@@ -218,23 +149,6 @@
             <div class="category-tree" id="categoryTree"></div>
           </details>
 
-          <details id="crmPipelineDetails" open>
-            <summary class="category-tree-toggle">🧭 CRM Pipeline <button id="editPipelineBtn" class="small secondary" style="margin-left:8px;" title="Aşamaları yeniden adlandır/sırala">✏️ Aşamaları Düzenle</button></summary>
-            <p class="muted" style="margin-top:0;">Bir aşamaya tıklayınca tablo o aşamadaki markalarla filtrelenir (üstteki durum sekmesiyle birlikte çalışır). Marka satırındaki açılır menüden markayı elle bir aşamaya taşıyabilirsin; e-mail bulma/gönderme/olumlu yanıt gibi olaylarda aşama otomatik ilerler (asla geri almaz).</p>
-            <div class="category-tree" id="crmPipeline"></div>
-            <div id="pipelineEditor" style="display:none; margin-top:12px; padding:12px; border:1px solid var(--border, #333); border-radius:8px;">
-              <p class="muted" style="margin-top:0;">Her aşamanın adını değiştirebilir, sırasını ok butonlarıyla değiştirebilir, silebilir ya da yeni aşama ekleyebilirsin. "Key" (brands.crm_stage'in referans verdiği sabit kimlik) değişmez, sadece görünen isim (label) değişir.</p>
-              <div id="pipelineEditorRows"></div>
-              <div class="toolbar" style="margin-top:8px;">
-                <input type="text" id="newStageLabelInput" placeholder="Yeni aşama adı..." style="flex:1; min-width:160px;" />
-                <button id="addStageBtn" class="small secondary">+ Aşama Ekle</button>
-                <button id="savePipelineBtn" class="small">Kaydet</button>
-                <button id="resetPipelineBtn" class="small secondary">Varsayılana Sıfırla</button>
-                <span class="muted" id="pipelineEditorStatus"></span>
-              </div>
-            </div>
-          </details>
-
           <div class="pagination-bar" id="paginationBarTop">
             <span class="muted">Sayfa başına:</span>
             <div class="page-size-group" id="pageSizeGroup">
@@ -279,6 +193,138 @@
           </table>
           </div>
         </div>
+        </section>
+
+        <!-- ================= YENİ MARKA EKLE ================= -->
+        <section class="view" data-view="marka-ekle" id="view-marka-ekle">
+        <div class="card">
+          <h2>📥 Marka listesi yükle (Excel/CSV)</h2>
+          <p class="muted">Dosyada marka adlarının olduğu bir sütun olmalı (örn: "Marka", "Brand"). İsteğe bağlı web sitesi sütunu da ekleyebilirsin.</p>
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+          <button id="uploadBtn">Yükle</button>
+          <span class="muted" id="uploadStatus"></span>
+        </div>
+
+        <div class="card">
+          <h2>🔍 E-mail bulma</h2>
+          <div class="toolbar">
+            <button id="findAllBtn">Tüm markalar için email ara</button>
+            <button id="stopFindAllBtn" class="secondary" disabled>Durdur</button>
+            <button id="resumeFindAllBtn" class="secondary" disabled>Devam Et</button>
+            <span class="muted" id="findStatus"></span>
+          </div>
+          <p class="muted">Otomatik bulma, internetten yaptığı arama ve site taramasına dayanır; her zaman doğru sonuç bulamayabilir. Göndermeden önce e-mailleri kontrol et/düzelt. Bulduktan sonra <a href="#marka-listesi" data-view-link="marka-listesi">Marka Listesi</a> sayfasından gönderebilirsin.</p>
+        </div>
+        </section>
+
+        <!-- ================= MAIL ŞABLONU ================= -->
+        <section class="view" data-view="mail-sablonu" id="view-mail-sablonu">
+        <div class="card">
+          <h2>✉️ Mail şablonu</h2>
+          <input type="text" id="subjectInput" placeholder="Konu (örn: {{marka}} ile iş birliği teklifi)" />
+          <p class="muted" style="margin-top:-6px;">Başka bir yerden (Word, Google Docs, başka bir mail) kopyaladığın metni doğrudan aşağıya yapıştırabilirsin — kalın/italik/liste gibi biçimlendirme korunur.</p>
+          <div class="rte-toolbar" data-target="bodyInput">
+            <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+            <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+            <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+            <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+            <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+          </div>
+          <div id="bodyInput" class="rich-editor" contenteditable="true" data-placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></div>
+          <div id="qualityScoreBadge" class="quality-score-badge" style="display:none;"></div>
+          <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
+        </div>
+        </section>
+
+        <!-- ================= CRM PIPELINE ================= -->
+        <section class="view" data-view="crm-pipeline" id="view-crm-pipeline">
+        <div class="card card-wide">
+          <h2>🧭 CRM Pipeline <button id="editPipelineBtn" class="small secondary" style="margin-left:8px;" title="Aşamaları yeniden adlandır/sırala">✏️ Aşamaları Düzenle</button></h2>
+          <p class="muted" style="margin-top:0;">Bir aşamaya tıklayınca <a href="#marka-listesi" data-view-link="marka-listesi">Marka Listesi</a>'nde o aşamadaki markalarla filtrelenir. Marka satırındaki açılır menüden markayı elle bir aşamaya taşıyabilirsin; e-mail bulma/gönderme/olumlu yanıt gibi olaylarda aşama otomatik ilerler (asla geri almaz).</p>
+          <div class="category-tree" id="crmPipeline"></div>
+          <div id="pipelineEditor" style="display:none; margin-top:12px; padding:12px; border:1px solid var(--border, #333); border-radius:8px;">
+            <p class="muted" style="margin-top:0;">Her aşamanın adını değiştirebilir, sırasını ok butonlarıyla değiştirebilir, silebilir ya da yeni aşama ekleyebilirsin. "Key" (brands.crm_stage'in referans verdiği sabit kimlik) değişmez, sadece görünen isim (label) değişir.</p>
+            <div id="pipelineEditorRows"></div>
+            <div class="toolbar" style="margin-top:8px;">
+              <input type="text" id="newStageLabelInput" placeholder="Yeni aşama adı..." style="flex:1; min-width:160px;" />
+              <button id="addStageBtn" class="small secondary">+ Aşama Ekle</button>
+              <button id="savePipelineBtn" class="small">Kaydet</button>
+              <button id="resetPipelineBtn" class="small secondary">Varsayılana Sıfırla</button>
+              <span class="muted" id="pipelineEditorStatus"></span>
+            </div>
+          </div>
+        </div>
+        </section>
+
+        <!-- ================= AYARLAR ================= -->
+        <section class="view" data-view="ayarlar" id="view-ayarlar">
+        <div class="card">
+          <h2>👤 Bilgilerin (mail imzası için)</h2>
+          <input type="text" id="settingsName" placeholder="Adın soyadın" />
+          <input type="text" id="settingsCompany" placeholder="Şirket adın" />
+          <textarea id="settingsOffer" placeholder="Markalara sunacağın teklif (örn: Amazon'da distribütörlük/bayilik teklifi)" rows="2"></textarea>
+          <textarea id="settingsSignature" placeholder="İmza (isim, telefon, web sitesi)" rows="2"></textarea>
+          <input type="text" id="settingsCompanyAddress" placeholder="Şirket fiziksel adresi (CAN-SPAM yasası gereği zorunlu, her mailin altına otomatik eklenir)" />
+          <button id="saveSettingsBtn" class="secondary">Kaydet</button>
+          <button id="backupNowBtn" class="secondary" title="Her Pazartesi otomatik gider; hemen bir yedek almak için buna basabilirsin" style="margin-left:8px;">💾 Şimdi Yedekle</button>
+          <span class="muted" id="backupStatus" style="margin-left:8px;"></span>
+        </div>
+
+        <div class="card">
+          <h2>🔍 SPF / DKIM / DMARC Kontrolü</h2>
+          <p class="muted">Mailin spam'e düşmemesi için en kritik üç DNS kaydını canlı olarak sorgular — README'deki kurulum talimatını uyguladıktan sonra gerçekten doğru kurulup kurulmadığını burada doğrulayabilirsin.</p>
+          <button id="checkDnsHealthBtn" class="secondary">Şimdi Kontrol Et</button>
+          <div id="dnsHealthResult" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>📈 Günlük otomatik gönderim limiti (opsiyonel)</h2>
+          <p class="muted">
+            400 marka gibi büyük bir listeyi tek seferde göndermek yerine, günde en fazla
+            kaç mail gönderileceğini buradan sınırlayabilirsin. 0 bırakırsan otomatik
+            gönderim kapalı olur (sadece elle/seçerek gönderirsin). Bir sayı girersen,
+            sistem her gün o kadarını 08:00-20:00 (UTC) arasına yayarak kendiliğinden
+            gönderir — art arda patlatmadığı için spam'e düşme riski azalır.
+          </p>
+          <input type="number" id="dailyLimitInput" min="0" placeholder="Örn: 60" style="max-width:160px;" />
+          <button id="saveDailyLimitBtn" class="secondary">Kaydet</button>
+
+          <hr style="margin:16px 0; border:none; border-top:1px solid #eee;" />
+          <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
+            <input type="checkbox" id="warmupEnabledCheckbox" style="width:auto; margin-top:3px;" />
+            <span>
+              <strong>Kademeli ısınma (warm-up)</strong> — yukarıdaki limite tek seferde değil,
+              haftalık kademeli artarak ulaş (yeni/az kullanılan bir gönderim düzeninde
+              birden yüksek hacim spam filtrelerinde şüphe uyandırabilir).
+            </span>
+          </label>
+          <div id="warmupFields" style="display:none; margin-top:8px; align-items:center; gap:8px;">
+            <label class="muted">Başlangıç: <input type="number" id="warmupStartLimitInput" min="1" style="max-width:90px;" value="10" /></label>
+            <label class="muted">Haftalık artış: <input type="number" id="warmupIncrementInput" min="1" style="max-width:90px;" value="10" /></label>
+            <button id="saveWarmupBtn" class="secondary">Kaydet</button>
+            <span class="muted" id="warmupStatus"></span>
+          </div>
+          <label style="display:flex; align-items:flex-start; gap:8px; font-weight:normal;">
+            <input type="checkbox" id="rewarmEnabledCheckbox" style="width:auto; margin-top:3px;" />
+            <span>
+              <strong>Soğuk markaları otomatik yeniden dene</strong> (varsayılan kapalı) — hiç yanıt
+              vermeden 3 takip aşamasını da tamamlayan markalara 120 gün, olumsuz yanıt verenlere ise
+              180 gün sonra otomatik olarak bir şans daha verir (her markaya en fazla 2 kez). Kalıcı
+              "bir daha yazma" listesindeki adresler bundan her zaman muaf tutulur.
+            </span>
+          </label>
+        </div>
+
+        <div class="card">
+          <h2>🚫 Kalıcı "Bir Daha Yazma" Listesi</h2>
+          <p class="muted">Biri açıkça "unsubscribe" / "bir daha yazma" dediğinde otomatik eklenir; marka kaydı silinse/yeniden yüklense bile bu adrese bir daha ASLA mail gitmez. Buradan elle de ekleyip çıkarabilirsin.</p>
+          <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <input type="email" id="suppressionEmailInput" placeholder="ornek@marka.com" style="flex:1;" />
+            <button id="addSuppressionBtn" class="secondary">Ekle</button>
+          </div>
+          <div id="suppressionList" class="muted">Yükleniyor...</div>
+        </div>
+        </section>
 
       </div>
     </div>
@@ -383,5 +429,6 @@
   <script src="/js/jobStatusToast.js"></script>
   <script src="/js/app.js"></script>
   <script src="/js/navBadge.js"></script>
+  <script src="/js/viewRouter.js"></script>
 </body>
 </html>

@@ -697,11 +697,14 @@ router.post("/api/brands/:id/send", async (req, res) => {
   // varyantları BİLEREK uygulanmıyor — sadece toplu/otomatik gönderimlerde devreye girer.
   const account = mailer.pickSenderAccount();
   try {
-    await mailer.sendMail({ to: brand.email, subject, body, account, trackOpenBrandId: brand.id });
+    const info = await mailer.sendMail({ to: brand.email, subject, body, account, trackOpenBrandId: brand.id });
     if (account) mailer.recordAccountSend(account.email);
+    // Bug fix: gönderilen mailin Message-ID'sini kaydediyoruz — gelen yanıtları
+    // In-Reply-To/References başlığıyla eşleştirip HANGİ markaya ait olduğunu
+    // kesin olarak belirlemek için (bkz. inboxChecker.js checkRepliesForMany).
     db.prepare(
-      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_via_account = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
-    ).run(account ? account.email : null, brand.id);
+      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_via_account = ?, sent_message_id = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+    ).run(account ? account.email : null, (info && info.messageId) || null, brand.id);
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
       brand.id,
       `${brand.email} adresine gönderildi.`
@@ -833,7 +836,7 @@ async function runAutoSend() {
   // tanımlı DEĞİLSE (varsayılan) her zaman .env'deki birincil hesabı döndürür.
   const account = mailer.pickSenderAccount();
   try {
-    await mailer.sendMail({
+    const info = await mailer.sendMail({
       to: candidate.email,
       subject,
       body,
@@ -841,12 +844,14 @@ async function runAutoSend() {
       trackOpenBrandId: candidate.id,
     });
     if (account) mailer.recordAccountSend(account.email);
+    // Bug fix: Message-ID kaydı — bkz. /api/brands/:id/send içindeki açıklama.
     db.prepare(
-      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_variant_subject = ?, sent_variant_body = ?, sent_via_account = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_variant_subject = ?, sent_variant_body = ?, sent_via_account = ?, sent_message_id = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
     ).run(
       subjectVariants.length > 0 ? chosenSubjectTemplate : null,
       bodyVariants.length > 0 ? chosenBodyTemplate : null,
       account ? account.email : null,
+      (info && info.messageId) || null,
       candidate.id
     );
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
@@ -920,14 +925,16 @@ async function processSendQueue() {
     const body = fillTemplateLocal(chosenBodyTemplate, brand.name);
     const account = mailer.pickSenderAccount();
     try {
-      await mailer.sendMail({ to: brand.email, subject, body, account, trackOpenBrandId: brand.id });
+      const info = await mailer.sendMail({ to: brand.email, subject, body, account, trackOpenBrandId: brand.id });
       if (account) mailer.recordAccountSend(account.email);
+      // Bug fix: Message-ID kaydı — bkz. /api/brands/:id/send içindeki açıklama.
       db.prepare(
-        `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_variant_subject = ?, sent_variant_body = ?, sent_via_account = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+        `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_variant_subject = ?, sent_variant_body = ?, sent_via_account = ?, sent_message_id = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
       ).run(
         subjectVariants.length > 0 ? chosenSubjectTemplate : null,
         bodyVariants.length > 0 ? chosenBodyTemplate : null,
         account ? account.email : null,
+        (info && info.messageId) || null,
         brand.id
       );
       db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(

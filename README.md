@@ -68,6 +68,26 @@ Eğer şu ana kadar disk eklemeden birden fazla güncelleme yaptıysan, önceki 
 muhtemelen siliniyor olabilir — disk ekledikten sonra Excel'ini tekrar yükleyip baştan
 başlayabilirsin, bundan sonrası kalıcı olacak.
 
+## Panel Sayfaları (v67)
+
+Eskiden "Marka Keşif" tek sayfada 8 farklı kartı (profil, DNS, kara liste, Excel
+yükleme, e-mail bulma, mail şablonu, günlük limit/warmup, dev marka tablosu) üst
+üste barındırıyordu. Artık sidebar'da 7 ayrı, odaklı sayfa var:
+
+- **📊 Dashboard** — günün özeti (analytics.html)
+- **📋 Marka Listesi** — ana çalışma alanı: filtreler, kategori ağacı, marka tablosu, gönderim
+- **📤 Yeni Marka Ekle** — Excel/CSV yükleme + toplu e-mail bulma
+- **✉️ Mail Şablonu** — konu/içerik editörü
+- **🧭 CRM Pipeline** — aşama bazlı görünüm + aşama düzenleme, kendi sayfasında
+- **📬 Mail Merkezi** — yanıt takibi (tracking.html)
+- **⚙️ Ayarlar** — profil, DNS kontrolü, günlük limit/warmup, kara liste (sidebar'da ayrı "Yönetim" grubunda)
+
+Marka Listesi, Yeni Marka Ekle, Mail Şablonu, CRM Pipeline ve Ayarlar aynı
+`index.html` dosyası içinde URL'nin sonundaki `#marka-listesi`, `#marka-ekle` gibi
+bir "hash" ile birbirinden ayrılıyor — sidebar'daki linke tıklayınca sayfa yeniden
+yüklenmeden ilgili bölüm açılıyor. Tüm butonlar/alanlar tam olarak eskisiyle aynı
+şekilde çalışmaya devam ediyor, sadece hangi kartın nerede göründüğü değişti.
+
 ## Kullanım
 
 Soldaki menü artık ince, ikon-only bir şerit — üzerine fare götürünce genişleyip
@@ -75,6 +95,10 @@ etiketleri gösteriyor, ayrılınca tekrar daralıyor. Amaç sayfada markalar ta
 daha fazla yer açmak. Tablo da artık sabit sütun genişlikleriyle sayfaya sığacak
 şekilde tasarlandı; "Seçilenleri Gönder" butonunun yanında kaç markanın checkbox'la
 işaretlendiğini gösteren canlı bir "X marka seçili" sayacı var.
+
+Aşağıdaki adım adım anlatım artık farklı sayfalara (Yeni Marka Ekle, Mail Şablonu,
+Ayarlar, Marka Listesi) dağılmış durumda — hangi kartın hangi sayfada olduğunu
+yukarıdaki "Panel Sayfaları" bölümünden görebilirsin, adımların kendisi değişmedi.
 
 1. **Bilgilerin**: adın, şirketin, teklifin ve imzanı gir, "Kaydet"e bas (mail şablonu
    otomatik bunları kullanır).
@@ -314,6 +338,36 @@ sekmesine git, **"IMAP'i Etkinleştir"** seçeneğini işaretle, kaydet.
 **Not:** Günlük otomatik kontrol, sunucunun sürekli açık kalmasını gerektirir (ücretsiz Render
 planında uyuduğu için güvenilir çalışmaz — bu yüzden Starter plana geçmiştin). Ücretsiz planda
 kalırsan, "Yanıtları Kontrol Et" butonuna manuel basman gerekir.
+
+## Yanıt Eşleştirme Doğruluğu — Message-ID Thread Takibi (v66, bug fix)
+
+**Düzeltilen sorun:** Aynı e-posta adresini/domain'i paylaşan birden fazla marka
+kaydı olduğunda (ör. aynı gerçek şirketin Amazon'da birkaç farklı marka adıyla
+satış yapması), gelen TEK bir yanıt eskiden HER markaya ayrı ayrı "olumlu yanıt
+geldi" olarak işleniyor, ikisine de (birebir aynı metinle) bildirim maili
+gönderiliyordu. Kullanıcı hangi markadan geldiğini anlayamıyordu.
+
+**Çözüm:**
+- Artık her giden mailin **Message-ID**'si kaydediliyor (`brands.sent_message_id`).
+  Gelen bir yanıt önce bu Message-ID'ye **In-Reply-To/References** başlığıyla
+  thread'lenip thread'lenmediğine bakılarak eşleştiriliyor — bu, aynı adrese/domain'e
+  birden fazla mail gitse bile HANGİ spesifik mailin yanıtlandığını kesin olarak
+  belirler ve en güvenilir eşleştirme yöntemidir.
+- Thread başlığı yoksa (bazı mail istemcileri bunu korumaz) sistem eskisi gibi
+  adres/domain eşleşmesine düşer, ama artık aynı çalıştırma içinde **aynı fiziksel
+  mesajın** başka bir markaya da "kesin yanıt" olarak atanmasını engelleyen bir
+  çakışma kontrolü var. Böyle bir çakışma tespit edilirse o marka için bildirim
+  MAİLİ GÖNDERİLMEZ, sentiment/CRM güncellenmez — bunun yerine markanın Notlar
+  alanına `[Otomatik uyarı] ...` diye başlayan görünür bir not eklenir ve elle
+  kontrol için işaretlenir.
+- **Gönderim Takibi** sayfasında bu artık açıkça görünür: paylaşılan e-posta/domain
+  şüphesi olan satırlarda sarı bir "⚠️ Paylaşılan e-posta/domain — belirsiz eşleşme,
+  kontrol et" etiketi ve gelen yanıtın gerçek "Gönderen" adresi gösterilir.
+
+**Not:** Bu düzeltme, geçmişte (v66'dan önce) gönderilmiş mailler için Message-ID
+kaydı tutmuyordu — o mailler için sistem otomatik olarak adres/domain eşleşmesine
+(çakışma korumasıyla birlikte) düşer. v66'dan sonra gönderilen yeni mailler için
+thread eşleştirmesi tam olarak devreye girer.
 
 ## İletişim formu ile gönderimi işaretleme
 

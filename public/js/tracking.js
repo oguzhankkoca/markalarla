@@ -2,6 +2,15 @@ const trackingBody = document.getElementById("trackingBody");
 const bouncedBody = document.getElementById("bouncedBody");
 const docRequestedBody = document.getElementById("docRequestedBody");
 
+function escapeHtml(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const DEAL_STAGE_LABELS = {
   new: "Yeni",
   meeting_scheduled: "Görüşme Planlandı",
@@ -167,17 +176,30 @@ function renderTracking(brands) {
     const stage = b.follow_up_stage || 0;
     const stageText = stage > 0 ? `${stage}/3 gönderildi` : "Henüz gönderilmedi";
 
+    // Bug fix (görünürlük): bu marka aynı e-posta/domain'i başka bir markayla
+    // paylaşıyor olabileceği için gelen bir yanıt burada belirsiz kaldıysa,
+    // otomatik not "notes" alanına "[Otomatik uyarı]" ile eklenir (bkz.
+    // tracking.js route'undaki sharedEmail işleme bloğu). Kullanıcı hangi markadan
+    // geldiğini tam olarak anlayamadığını bildirdiği için bunu tabloda AÇIKÇA
+    // gösteriyoruz — artık sessizce notlara gömülü kalmıyor.
+    const sharedWarning =
+      b.notes && b.notes.includes("[Otomatik uyarı]")
+        ? `<div class="badge pending" title="${escapeHtml(b.notes)}" style="margin-top:4px;">⚠️ Paylaşılan e-posta/domain — belirsiz eşleşme, kontrol et</div>`
+        : "";
+    const replyFromText = b.reply_from ? `<div class="muted" style="margin-top:2px;">Gönderen: ${escapeHtml(b.reply_from)}</div>` : "";
+
     tr.innerHTML = `
       <td>${b.name}<br><span class="muted">${b.email || ""}</span></td>
       <td>${sentAtText}</td>
       <td>
         ${sentimentBadge(b.reply_sentiment, b.replied, b.bounced)}
         ${b.document_requested ? `<div><span class="badge pending">📎 Belge isteniyor</span></div>` : ""}
+        ${sharedWarning}
         <div>${sentimentSelect(b.id)}</div>
       </td>
       <td class="muted">${stageText}</td>
       <td>${dealStageSelect(b.id, b.deal_stage || "new")}</td>
-      <td class="muted">${b.reply_snippet ? b.reply_snippet.slice(0, 120) + "..." : ""}</td>
+      <td class="muted">${replyFromText}${b.reply_snippet ? b.reply_snippet.slice(0, 120) + "..." : ""}</td>
       <td class="actions-cell">
         <button class="small secondary history-btn" data-id="${b.id}" data-name="${b.name}">Geçmiş</button>
         ${b.document_requested ? `<button class="small doc-done-btn-row" data-id="${b.id}" data-name="${b.name}">Belge Gönderildi</button>` : ""}

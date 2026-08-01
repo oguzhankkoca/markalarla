@@ -380,6 +380,17 @@ ensureColumn("brands", "opened_at", "TEXT");
 ensureColumn("settings", "sender_accounts", "TEXT");
 ensureColumn("brands", "sent_via_account", "TEXT");
 
+// Bug fix: aynı domain'deki (ya da hatta aynı e-postayı paylaşan) birden fazla
+// marka kaydı için gelen TEK bir yanıt, eskiden "from adresi" ya da "domain"
+// eşleşmesiyle YANLIŞLIKLA birden fazla markaya "olumlu yanıt" olarak
+// atanabiliyordu (ör. aynı distribütörün iki farklı Amazon markasına ayrı ayrı
+// mail atıldığında, gelen tek bir cevap ikisine de "olumlu yanıt geldi" diye
+// bildirim gönderiyordu). Çözüm: gönderilen her mailin Message-ID'sini kaydet,
+// gelen yanıtları önce In-Reply-To/References başlığıyla (kesin eşleşme) eşleştir
+// — bu, aynı adrese/domain'e birden fazla mail gitse bile HANGİ spesifik mailin
+// yanıtlandığını tam olarak belirler.
+ensureColumn("brands", "sent_message_id", "TEXT");
+
 // Performans (v65): 100.000+ marka ile sorgular hâlâ hızlı kalsın diye en sık
 // filtrelenen/sıralanan sütunlara indeks. CREATE INDEX IF NOT EXISTS idempotent
 // olduğu için her başlangıçta güvenle tekrar çalıştırılabilir.

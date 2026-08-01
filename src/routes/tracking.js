@@ -333,6 +333,7 @@ async function runFullCheck() {
     id: b.id,
     email: b.email,
     sentAtDate: b.sent_at ? new Date(b.sent_at) : null,
+    messageId: b.sent_message_id || null,
   }));
 
   // 1) Önce bounce (geri dönen mail) taraması yap, bounce olanları döngü dışına al
@@ -393,6 +394,27 @@ async function runFullCheck() {
     for (const brand of remainingCandidates) {
       const result = results.get(brand.id);
       db.prepare("UPDATE brands SET last_checked_at = CURRENT_TIMESTAMP WHERE id = ?").run(brand.id);
+
+      // Bug fix: bu fiziksel yanıt, bu run içinde BAŞKA bir markaya (paylaşılan
+      // e-posta/domain yüzünden) zaten KESİN olarak atandı — o markaya normal
+      // şekilde sentiment/bildirim/CRM ilerlemesi uygulandı. Burada AYNI şeyi
+      // tekrar (mükerrer bildirim mailiyle birlikte) uygulamak yerine, sadece
+      // görünür bir not bırakıp bir sonraki kontrole bırakıyoruz — kullanıcı
+      // "Trendsettings'ten olumlu yanıt geldi" + "Sacred Traditions'tan da
+      // (birebir aynı metinle) olumlu yanıt geldi" gibi kafa karıştırıcı çift
+      // bildirim ALMASIN diye.
+      if (result && result.found && result.sharedEmail) {
+        const otherBrand = db.prepare("SELECT name FROM brands WHERE id = ?").get(result.sharedWithBrandId);
+        const autoNote = `[Otomatik uyarı] Bu markanın e-postası "${
+          otherBrand ? otherBrand.name : "başka bir marka"
+        }" ile aynı adresi/domain'i paylaşıyor olabilir — oraya gelen bir yanıt burada da eşleşti ama kesinleştirilmedi (mükerrer bildirim gönderilmedi). Gönderim Takibi'nden elle kontrol et.`;
+        const current = db.prepare("SELECT notes FROM brands WHERE id = ?").get(brand.id);
+        if (!current || !current.notes || !current.notes.includes("[Otomatik uyarı]")) {
+          const newNotes = current && current.notes ? `${current.notes}\n${autoNote}` : autoNote;
+          db.prepare("UPDATE brands SET notes = ? WHERE id = ?").run(newNotes, brand.id);
+        }
+        continue;
+      }
 
       if (result && result.found && result.isBounceLike) {
         // "Yanıt" gibi görünse de (marka adresinden geldiği için eşleşti) aslında
@@ -487,15 +509,18 @@ async function runFullCheck() {
       if (nextStep) {
         const template = getFollowUpTemplate(settings, nextStep.stage);
         try {
-          await mailer.sendMail({
+          const followUpInfo = await mailer.sendMail({
             to: brand.email,
             subject: fillTemplate(template.subject, brand.name),
             body: fillTemplate(template.body, brand.name),
           });
+          // Bug fix: follow-up mailinin Message-ID'sini de günceliyoruz — alıcı
+          // en son gönderilen (follow-up) maile yanıt verirse, thread eşleştirmesi
+          // hâlâ bu markaya kesin olarak bağlansın (bkz. inboxChecker.js).
           db.prepare(
             `UPDATE brands SET follow_up_stage = ?, last_follow_up_at = CURRENT_TIMESTAMP,
-             follow_up_sent_at = CURRENT_TIMESTAMP WHERE id = ?`
-          ).run(nextStep.stage, brand.id);
+             follow_up_sent_at = CURRENT_TIMESTAMP, sent_message_id = ? WHERE id = ?`
+          ).run(nextStep.stage, (followUpInfo && followUpInfo.messageId) || brand.sent_message_id || null, brand.id);
           db.prepare(
             "INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)"
           ).run(brand.id, `${nextStep.stage}. aşama follow-up gönderildi: ${brand.email}`);

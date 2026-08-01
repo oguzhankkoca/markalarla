@@ -270,13 +270,34 @@ function getImapConfig() {
 
 // Tek bir IMAP bağlantısı açıp birden fazla marka için sırayla arama yapar
 // (her marka için ayrı bağlantı açmaktan çok daha hızlıdır).
-// brandList: [{ id, email, sentAtDate }]
+// brandList: [{ id, email, sentAtDate, messageId }]
 // Döner: { results: Map<brandId, {...}>, errors: string[] }
 //   results değeri: { found, snippet, sentiment, from, documentRequested, isBounceLike, aiReason, matchType, error }
+//
+// BUG FİXİ (önemli): Eskiden eşleştirme SADECE "from adresi" (sonra da "aynı
+// domain") bazlıydı. Aynı gerçek şirket/distribütör birden fazla Amazon
+// markası için ayrı ayrı mail alıyorsa (ör. iki farklı marka adına, aynı
+// domain'deki farklı adreslere ya da hatta AYNI adrese mail atıldıysa), gelen
+// TEK bir yanıt her iki markaya da "olumlu yanıt geldi" diye YANLIŞLIKLA
+// atanıp iki ayrı bildirim mailine yol açabiliyordu. Artık ÖNCE, gönderilen
+// mailin Message-ID'siyle (bkz. brands.sent_message_id) yanıtın In-Reply-To/
+// References başlığı eşleştiriliyor — bu, e-posta istemcilerinin thread'leme
+// için kullandığı standart mekanizma, ve HANGİ spesifik mailin yanıtlandığını
+// kesin olarak belirler (aynı adrese/domain'e kaç mail gitmiş olursa olsun).
+// Thread eşleşmesi yoksa (bazı yanıtlar başlıkları korumaz) eski from/domain
+// mantığına düşülür — ama artık AYNI fiziksel mesaj bu run içinde birden fazla
+// markaya "kesin eşleşme" gibi sunulmuyor: claimedUids ile takip edilip
+// "shared_email" olarak işaretleniyor (bkz. aşağıdaki not).
 async function checkRepliesForMany(brandList) {
   const results = new Map();
   const errors = [];
   if (!brandList || brandList.length === 0) return { results, errors };
+
+  // Bu run içinde, from/domain (thread DEĞİL) eşleşmesiyle bulunan her UID'nin
+  // İLK hangi markaya atandığını tutar. Aynı UID başka bir markaya da eşleşirse
+  // (fiziksel olarak AYNI mesaj), bu ikinci/üçüncü markaya "shared_email" diye
+  // işaretlenir — sanki ayrı, doğrulanmış bir yanıtmış gibi sunulmaz.
+  const claimedUids = new Map(); // uid -> { brandId }
 
   const client = new ImapFlow(getImapConfig());
   await client.connect();
@@ -285,17 +306,42 @@ async function checkRepliesForMany(brandList) {
     try {
       for (const brand of brandList) {
         try {
-          const searchCriteria = { from: brand.email };
-          if (brand.sentAtDate) searchCriteria.since = brand.sentAtDate;
+          let uids = [];
+          let matchType = null;
 
-          let uids = await client.search(searchCriteria);
-          let matchType = "exact";
+          // 1) EN GÜVENİLİR: gönderdiğimiz mailin Message-ID'sine thread'lenen yanıt.
+          if (brand.messageId) {
+            try {
+              uids = await client.search({ header: { "in-reply-to": brand.messageId } });
+              if (uids && uids.length > 0) matchType = "thread";
+            } catch (e0) {
+              // header araması desteklenmiyor/başarısız olabilir, sessizce devam et
+            }
+            if ((!uids || uids.length === 0)) {
+              try {
+                const refUids = await client.search({ header: { references: brand.messageId } });
+                if (refUids && refUids.length > 0) {
+                  uids = refUids;
+                  matchType = "thread";
+                }
+              } catch (e0b) {
+                // yoksay
+              }
+            }
+          }
 
-          // Marka adresine gönderdik ama şirketteki başka biri (satış temsilcisi,
+          // 2) Thread eşleşmesi yoksa: markanın kendi adresinden gelen mail.
+          if ((!uids || uids.length === 0) && brand.email) {
+            const searchCriteria = { from: brand.email };
+            if (brand.sentAtDate) searchCriteria.since = brand.sentAtDate;
+            uids = await client.search(searchCriteria);
+            if (uids && uids.length > 0) matchType = "exact";
+          }
+
+          // 3) Marka adresine gönderdik ama şirketteki başka biri (satış temsilcisi,
           // farklı bir departman vb.) FARKLI bir adresten yanıtlamış olabilir —
-          // B2B outreach'te çok sık rastlanan bir durum, ve eskiden sistem bunu
-          // hiç yakalayamıyordu (sadece tam eşleşen adresi arıyordu). Tam eşleşme
-          // bulunamazsa aynı domain'den gelen mailleri de dene.
+          // B2B outreach'te çok sık rastlanan bir durum. Tam eşleşme bulunamazsa
+          // aynı domain'den gelen mailleri de dene (en son çare, en az güvenilir).
           if ((!uids || uids.length === 0) && brand.email && brand.email.includes("@")) {
             const domain = brand.email.split("@")[1];
             if (domain) {
@@ -319,6 +365,25 @@ async function checkRepliesForMany(brandList) {
           }
 
           const lastUid = uids[uids.length - 1];
+
+          // AYNI fiziksel mesaj, thread DIŞI bir eşleşmeyle (exact/domain) daha
+          // önce bu run içinde BAŞKA bir markaya atanmışsa: bunu "kesin doğrulanmış
+          // yanıt" gibi sunma — paylaşılan e-posta/domain olarak işaretle. Thread
+          // eşleşmesi (matchType === "thread") HER ZAMAN kesindir, bu kontrolden muaftır.
+          if (matchType !== "thread") {
+            const claim = claimedUids.get(lastUid);
+            if (claim && claim.brandId !== brand.id) {
+              results.set(brand.id, {
+                found: true,
+                sharedEmail: true,
+                sharedWithBrandId: claim.brandId,
+                matchType,
+              });
+              continue;
+            }
+            claimedUids.set(lastUid, { brandId: brand.id });
+          }
+
           const message = await client.fetchOne(lastUid, { source: true });
           if (!message || !message.source) {
             results.set(brand.id, { found: false });

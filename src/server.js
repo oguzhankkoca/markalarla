@@ -9,6 +9,10 @@ const trackingRoutes = require("./routes/tracking");
 const analyticsRoutes = require("./routes/analytics");
 const creditsRoutes = require("./routes/credits");
 const suppressionRoutes = require("./routes/suppression");
+const tasksRoutes = require("./routes/tasks");
+const documentsRoutes = require("./routes/documents");
+const aiFeaturesRoutes = require("./routes/aiFeatures");
+const dashboardRoutes = require("./routes/dashboard");
 const mailer = require("./services/mailer");
 
 const app = express();
@@ -21,6 +25,10 @@ app.use(trackingRoutes);
 app.use(analyticsRoutes);
 app.use(creditsRoutes);
 app.use(suppressionRoutes);
+app.use(tasksRoutes);
+app.use(documentsRoutes);
+app.use(aiFeaturesRoutes);
+app.use(dashboardRoutes);
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 app.listen(PORT, () => {

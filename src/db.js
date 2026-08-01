@@ -204,6 +204,47 @@ ensureColumn("settings", "warmup_started_at", "TEXT");
 ensureColumn("brands", "batch_name", "TEXT");
 ensureColumn("brands", "batch_uploaded_at", "TEXT");
 
+// Opportunity Score (0-100): Brand Score, tahmini ciro, yorum sayısı, kategori
+// verisinin varlığı, web sitesi tespit güveni ve Amazon'daki satıcı rekabetini
+// tek bir sayıda birleştiren, saf matematiksel (AI kullanmayan, dolayısıyla
+// ücretsiz ve otomatik hesaplanabilen) öncelik skoru. Ayrıntılı kırılımı (her
+// bileşenin kaç puan katkısı olduğu) opportunity_score_breakdown'da JSON olarak
+// saklanır — panelde "neden bu puan" sorusuna cevap verebilmek için.
+ensureColumn("brands", "opportunity_score", "REAL");
+ensureColumn("brands", "opportunity_score_breakdown", "TEXT");
+
+// CRM Pipeline: eski "deal_stage" (5 sabit aşama, sadece anlaşma sonrası süreç
+// için) yerine/yanında, e-mail bulunmadan önceki adımları da kapsayan ve
+// kullanıcının kendi ayarlarından yeniden adlandırıp sıralayabildiği daha
+// kapsamlı bir aşama alanı. Varsayılan 10 aşama settings.crm_pipeline_stages'te
+// JSON olarak tutulur (bkz. src/services/crmPipeline.js); burada sadece
+// markanın o an hangi aşamada olduğunu (aşamanın "key"i) tutuyoruz.
+// ÖNEMLİ: Buraya DEFAULT değeri KASITLI OLARAK eklenmedi — SQLite'ta ALTER TABLE
+// ADD COLUMN ... DEFAULT 'x' yazılırsa, tabloda ZATEN VAR OLAN tüm satırlar
+// anında 'x' değeriyle doldurulur (NULL kalmaz). Bu da aşağıdaki "duruma göre
+// akıllı başlangıç aşaması" backfill UPDATE'inin hiçbir satırı NULL bulamayıp
+// hiç çalışmamasına yol açardı (bu tam olarak bir deneme sırasında yakalanan bir
+// hataydı). Yeni eklenen markalar için crm_stage değeri INSERT sırasında
+// (brands.js'deki upload rotasında) elle 'new_lead' olarak veriliyor.
+ensureColumn("brands", "crm_stage", "TEXT");
+ensureColumn("settings", "crm_pipeline_stages", "TEXT");
+
+// Var olan kayıtlarda crm_stage boşsa (eski kayıtlar), mevcut duruma göre en
+// azından makul bir başlangıç aşamasına yerleştir — sıfırdan "new_lead" yerine,
+// gerçek durumunu yansıtan bir aşamadan başlasın (ör. zaten mail gönderilmiş
+// bir markanın pipeline'da "Yeni Aday" görünmesi kafa karıştırır).
+db.exec(`
+  UPDATE brands SET crm_stage = CASE
+    WHEN crm_stage IS NOT NULL AND crm_stage != '' THEN crm_stage
+    WHEN status = 'sent' AND document_requested = 1 THEN 'documents_requested'
+    WHEN status = 'sent' AND reply_sentiment = 'positive' THEN 'positive_reply'
+    WHEN status = 'sent' THEN 'email_sent'
+    WHEN status = 'found' THEN 'email_found'
+    ELSE 'new_lead'
+  END
+  WHERE crm_stage IS NULL OR crm_stage = ''
+`);
+
 // Var olan kayıtlar için normalize edilmiş isim doldur (tekrar tespiti bunu kullanır)
 db.exec(`
   UPDATE brands SET name_normalized = LOWER(TRIM(name))
@@ -239,6 +280,122 @@ try {
 } catch (e) {
   console.error("Cross-brand e-posta tekrarı taraması sırasında hata:", e.message);
 }
+
+// ---------------------------------------------------------------------------
+// v46 ve sonrası: büyük özellik paketi (görev/hatırlatma, timeline, evrak
+// yönetimi, AI opt-in özellikleri, subject rotation/A-B test, çoklu hesap
+// altyapısı, performans indeksleri). Hepsi ADDİTİF — var olan davranışı
+// değiştirmez, sadece yeni sütun/tablo ekler.
+// ---------------------------------------------------------------------------
+
+// Görev/Hatırlatma sistemi (v46): her markaya not niteliğinde birden fazla
+// görev eklenebilir, her birinin bir son tarihi (due_date) olabilir. Panelde
+// "bugün ya da daha önce, henüz tamamlanmamış" görevler bildirim olarak sayılır.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    due_date TEXT,
+    completed INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+  )
+`);
+
+// Marka bazlı Timeline (v53): gönderim, yanıt, bounce, evrak talebi, pipeline
+// aşama değişikliği gibi olaylar buraya kronolojik olarak (append-only)
+// yazılır. Var olan geçmiş veri için geriye dönük olay üretilmez (o veri hiç
+// tutulmuyordu) — bu tablo YARATILDIĞI andan itibaren olacakları kaydeder.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS brand_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    message TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Evrak yönetim sistemi (v54): dosyanın kendisi diskte (bkz. services/documents.js,
+// DATA_DIR/documents/<brandId>/ altında) saklanır, burada sadece meta veri tutulur.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS brand_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brand_id INTEGER NOT NULL,
+    doc_type TEXT,
+    original_name TEXT,
+    stored_filename TEXT NOT NULL,
+    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Çoklu gönderici hesabı (v59) günlük gönderim sayaçları — round-robin sırasında
+// "bugün hangi hesap kaç mail gönderdi" bilgisini tutar (her hesabın kendi
+// günlük limitine/ısınma eğrisine sadık kalabilmesi için).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS account_daily_stats (
+    account_email TEXT NOT NULL,
+    date TEXT NOT NULL,
+    sent_count INTEGER DEFAULT 0,
+    PRIMARY KEY (account_email, date)
+  )
+`);
+
+// Wholesale/Distributor/Dealer sayfası otomatik tespiti (v49) — e-mail arama
+// sırasında ana sayfada bulunan ilgili linki (varsa) burada saklıyoruz.
+ensureColumn("brands", "wholesale_page_url", "TEXT");
+
+// AI Kişiselleştirme (v55, isteğe bağlı — "AI Analiz Et" butonuyla tetiklenir).
+ensureColumn("brands", "ai_personalized_intro", "TEXT");
+ensureColumn("brands", "ai_personalized_at", "TEXT");
+
+// AI Lead Priority + otomatik etiketleme (v56, isteğe bağlı).
+ensureColumn("brands", "ai_priority", "TEXT");
+ensureColumn("brands", "ai_tags", "TEXT");
+ensureColumn("brands", "ai_analyzed_at", "TEXT");
+
+// AI cevap sınıflandırma + otomatik taslak yanıt (v57). reply_sentiment
+// (positive/negative) zaten vardı — reply_category daha GRANÜLER bir
+// sınıflandırma (Interested/Need Documents/Need MOQ/... — bkz. inboxChecker.js).
+ensureColumn("brands", "reply_category", "TEXT");
+ensureColumn("brands", "ai_draft_reply", "TEXT");
+ensureColumn("brands", "ai_draft_reply_at", "TEXT");
+
+// Subject Rotation + A/B Test motoru (v58): kullanıcı birden fazla konu/gövde
+// varyantı tanımlayabilir (JSON dizi), gönderim sırasında rastgele biri seçilir.
+// Hangi markaya hangi varyantın gittiği ve mailin açılıp açılmadığı (tracking
+// pixel) ayrı ayrı takip edilir ki varyant bazında performans karşılaştırılabilsin.
+ensureColumn("settings", "subject_variants", "TEXT");
+ensureColumn("settings", "body_variants", "TEXT");
+ensureColumn("brands", "sent_variant_subject", "TEXT");
+ensureColumn("brands", "sent_variant_body", "TEXT");
+ensureColumn("brands", "opened", "INTEGER DEFAULT 0");
+ensureColumn("brands", "opened_at", "TEXT");
+
+// Çoklu gönderici hesabı altyapısı (v59): hesap listesi settings'te JSON olarak
+// tutulur (bkz. services/senderAccounts.js) — kullanıcı ek hesap bağlamadığı
+// sürece boş kalır ve sistem eskisi gibi tek hesapla (EMAIL_USER/.env) çalışmaya
+// devam eder, HİÇBİR ŞEY BOZULMAZ.
+ensureColumn("settings", "sender_accounts", "TEXT");
+ensureColumn("brands", "sent_via_account", "TEXT");
+
+// Performans (v65): 100.000+ marka ile sorgular hâlâ hızlı kalsın diye en sık
+// filtrelenen/sıralanan sütunlara indeks. CREATE INDEX IF NOT EXISTS idempotent
+// olduğu için her başlangıçta güvenle tekrar çalıştırılabilir.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_brands_status ON brands(status);
+  CREATE INDEX IF NOT EXISTS idx_brands_batch ON brands(batch);
+  CREATE INDEX IF NOT EXISTS idx_brands_crm_stage ON brands(crm_stage);
+  CREATE INDEX IF NOT EXISTS idx_brands_main_category ON brands(main_category);
+  CREATE INDEX IF NOT EXISTS idx_brands_email ON brands(email);
+  CREATE INDEX IF NOT EXISTS idx_brands_name_normalized ON brands(name_normalized);
+  CREATE INDEX IF NOT EXISTS idx_brands_opportunity_score ON brands(opportunity_score);
+  CREATE INDEX IF NOT EXISTS idx_tasks_brand_id ON tasks(brand_id);
+  CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
+  CREATE INDEX IF NOT EXISTS idx_brand_events_brand_id ON brand_events(brand_id);
+  CREATE INDEX IF NOT EXISTS idx_brand_documents_brand_id ON brand_documents(brand_id);
+`);
 
 module.exports = db;
 module.exports.dbFilePath = dbFilePath;

@@ -119,6 +119,7 @@
             <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
           </div>
           <div id="bodyInput" class="rich-editor" contenteditable="true" data-placeholder="Mail içeriği. {{marka}} yazdığın yerler otomatik marka adıyla değiştirilir."></div>
+          <div id="qualityScoreBadge" class="quality-score-badge" style="display:none;"></div>
           <button id="saveTemplateBtn" class="secondary">Şablonu kaydet</button>
         </div>
 
@@ -173,6 +174,27 @@
             <span class="muted" id="sendStatus"></span>
             <span class="muted" id="findSelectedStatus"></span>
           </div>
+          <div class="toolbar" id="searchAndAdvancedFilters" style="margin-bottom:8px;">
+            <input type="text" id="brandSearchInput" placeholder="🔎 Ara: marka adı, e-mail, website, kategori, ülke, not, etiket..." style="flex:1; min-width:240px;" />
+            <select id="filterConfidence" title="Güven seviyesi">
+              <option value="">Tüm güven seviyeleri</option>
+              <option value="high">Yüksek güven</option>
+              <option value="medium">Orta güven</option>
+              <option value="low">Düşük güven</option>
+            </select>
+            <select id="filterAiPriority" title="AI önceliği">
+              <option value="">Tüm AI öncelikleri</option>
+              <option value="high">🔥 Yüksek</option>
+              <option value="medium">Orta</option>
+              <option value="low">Düşük</option>
+            </select>
+            <select id="filterWholesale" title="Wholesale sayfası">
+              <option value="">Wholesale sayfası: farketmez</option>
+              <option value="yes">Sadece bulunanlar</option>
+            </select>
+            <input type="number" id="filterMinScore" placeholder="Min. Opportunity Score" style="width:170px;" min="0" max="100" />
+            <button id="clearAdvancedFiltersBtn" class="secondary">Filtreleri Temizle</button>
+          </div>
           <div class="filter-tabs" id="filterTabs">
             <button class="filter-tab active" data-filter="all">Tümü <span class="filter-count" id="countAll">0</span></button>
             <button class="filter-tab" data-filter="new_upload" id="newUploadTab" title="En son yüklediğin Excel dosyasındaki markalar">🆕 Yeni Yüklenen <span class="filter-count" id="countNewUpload">0</span></button>
@@ -194,6 +216,23 @@
             <summary class="category-tree-toggle">🗂️ Kategori Ağacı (<span id="categoryTreeCount">0</span>)</summary>
             <p class="muted" style="margin-top:0;">Excel'deki "Main Category" sütunundan otomatik oluşur. Bir kategoriye tıklayınca tablo o kategoriyle filtrelenir (üstteki durum sekmesiyle birlikte çalışır); tekrar tıklayınca filtre kalkar.</p>
             <div class="category-tree" id="categoryTree"></div>
+          </details>
+
+          <details id="crmPipelineDetails" open>
+            <summary class="category-tree-toggle">🧭 CRM Pipeline <button id="editPipelineBtn" class="small secondary" style="margin-left:8px;" title="Aşamaları yeniden adlandır/sırala">✏️ Aşamaları Düzenle</button></summary>
+            <p class="muted" style="margin-top:0;">Bir aşamaya tıklayınca tablo o aşamadaki markalarla filtrelenir (üstteki durum sekmesiyle birlikte çalışır). Marka satırındaki açılır menüden markayı elle bir aşamaya taşıyabilirsin; e-mail bulma/gönderme/olumlu yanıt gibi olaylarda aşama otomatik ilerler (asla geri almaz).</p>
+            <div class="category-tree" id="crmPipeline"></div>
+            <div id="pipelineEditor" style="display:none; margin-top:12px; padding:12px; border:1px solid var(--border, #333); border-radius:8px;">
+              <p class="muted" style="margin-top:0;">Her aşamanın adını değiştirebilir, sırasını ok butonlarıyla değiştirebilir, silebilir ya da yeni aşama ekleyebilirsin. "Key" (brands.crm_stage'in referans verdiği sabit kimlik) değişmez, sadece görünen isim (label) değişir.</p>
+              <div id="pipelineEditorRows"></div>
+              <div class="toolbar" style="margin-top:8px;">
+                <input type="text" id="newStageLabelInput" placeholder="Yeni aşama adı..." style="flex:1; min-width:160px;" />
+                <button id="addStageBtn" class="small secondary">+ Aşama Ekle</button>
+                <button id="savePipelineBtn" class="small">Kaydet</button>
+                <button id="resetPipelineBtn" class="small secondary">Varsayılana Sıfırla</button>
+                <span class="muted" id="pipelineEditorStatus"></span>
+              </div>
+            </div>
           </details>
 
           <div class="pagination-bar" id="paginationBarTop">
@@ -274,6 +313,69 @@
       <div class="toolbar">
         <button id="previewSendBtn">Gönder</button>
         <button id="previewCancelBtn" class="secondary">İptal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v46/v49/v53/v54/v55/v56/v57/v63: Marka Detay Paneli — eskiden "Detay" butonu
+       sadece arama adımlarını bir alert() ile gösteriyordu; artık aynı buton bu
+       daha kapsamlı paneli açıyor (sekmeler: Arama Adımları, Timeline, Görevler,
+       Evraklar, AI Analiz, Wholesale Form). -->
+  <div id="brandPanelOverlay" class="overlay" style="display:none;">
+    <div class="modal" style="max-width:720px;">
+      <h2 id="brandPanelTitle">Marka Detayı</h2>
+      <div class="toolbar" id="brandPanelTabs" style="margin-bottom:12px;">
+        <button class="small secondary brand-panel-tab active" data-tab="trace">Arama Adımları</button>
+        <button class="small secondary brand-panel-tab" data-tab="timeline">🕒 Timeline</button>
+        <button class="small secondary brand-panel-tab" data-tab="tasks">📌 Görevler</button>
+        <button class="small secondary brand-panel-tab" data-tab="documents">📄 Evraklar</button>
+        <button class="small secondary brand-panel-tab" data-tab="ai">🤖 AI Analiz</button>
+        <button class="small secondary brand-panel-tab" data-tab="wholesale">🛒 Wholesale Form</button>
+      </div>
+
+      <div id="brandPanelTrace" class="brand-panel-section"></div>
+
+      <div id="brandPanelTimeline" class="brand-panel-section" style="display:none;"></div>
+
+      <div id="brandPanelTasks" class="brand-panel-section" style="display:none;">
+        <div class="toolbar">
+          <input type="text" id="newTaskTitle" placeholder="Yeni görev (ör. 3 gün sonra tekrar ara)" style="flex:1;" />
+          <input type="date" id="newTaskDueDate" />
+          <button id="addTaskBtn" class="small">Ekle</button>
+        </div>
+        <div id="taskList"></div>
+      </div>
+
+      <div id="brandPanelDocuments" class="brand-panel-section" style="display:none;">
+        <div class="toolbar">
+          <select id="newDocType"></select>
+          <input type="file" id="newDocFile" />
+          <button id="uploadDocBtn" class="small">Yükle</button>
+        </div>
+        <div id="documentList"></div>
+      </div>
+
+      <div id="brandPanelAi" class="brand-panel-section" style="display:none;">
+        <p class="muted">AI özellikleri isteğe bağlıdır ve sadece burada tıkladığında çalışır (otomatik/arka planda çalışmaz). Ayarlar'da bir Anthropic API anahtarı gerekir.</p>
+        <div class="toolbar">
+          <button id="aiPersonalizeBtn" class="small secondary">✍️ Kişiselleştirilmiş Giriş Üret</button>
+          <button id="aiPriorityBtn" class="small secondary">🔥 Öncelik/Etiket Belirle</button>
+          <button id="aiClassifyReplyBtn" class="small secondary">💬 Yanıtı Sınıflandır + Taslak Yaz</button>
+        </div>
+        <div id="aiResultBox"></div>
+      </div>
+
+      <div id="brandPanelWholesale" class="brand-panel-section" style="display:none;">
+        <p class="muted" id="wholesaleInfoText"></p>
+        <div class="toolbar">
+          <button id="fillWholesaleFormBtn" class="small secondary">Formu Otomatik Doldur (Önizleme)</button>
+        </div>
+        <p class="muted">Not: form ASLA otomatik gönderilmez — sadece doldurulup ekran görüntüsü sunulur, göndermeyi sen yaparsın.</p>
+        <div id="wholesaleResultBox"></div>
+      </div>
+
+      <div class="toolbar" style="margin-top:16px;">
+        <button id="brandPanelCloseBtn" class="secondary">Kapat</button>
       </div>
     </div>
   </div>

@@ -670,6 +670,34 @@ geri döndüğünde de kaldığı yerden devam ediyor (sıfırlanmıyor). Ayrıc
 butonu eklendi — artık toplu gönderimde olduğu gibi seçilen markalar için
 başlattığın aramayı da istediğin an durdurabilirsin.
 
+## Opportunity Score + CRM Pipeline (v45)
+
+Bu, çok daha büyük bir yol haritasının (24 madde) ilk iki adımı — geri kalanı
+sırayla, her biri test edilip paketlenerek gelecek versiyonlarda gelecek.
+
+**Opportunity Score (0-100):** Her markanın satırında artık isim hücresinin
+yanında 🎯 ile başlayan renkli bir puan görünüyor (yeşil ≥70 güçlü fırsat, sarı
+40-69 orta, gri <40 düşük öncelik). Puan; Brand Score, tahmini aylık ciro,
+yorum sayısı, kategori verisinin varlığı, web sitesi arama güveni (confidence)
+ve Amazon'daki satıcı rekabetini birleştiren saf bir formülle hesaplanıyor —
+**yapay zeka kullanmıyor**, bu yüzden tamamen ücretsiz ve otomatik: Excel
+yüklendiğinde ve bir markanın e-maili bulunduğunda kendiliğinden hesaplanıp
+güncelleniyor. Puanın üzerine gelince (hover) hangi bileşenden kaç puan
+geldiğinin dökümünü görebilirsin.
+
+**CRM Pipeline:** Marka satırlarındaki durum rozetinin altına, markayı elle bir
+aşamaya taşıyabileceğin küçük bir açılır menü eklendi. Varsayılan 10 aşama:
+Yeni Aday → E-mail Bulundu → Mail Gönderildi → Takip Ediliyor → Olumlu Yanıt →
+Evrak İstendi → Başvuru Yapıldı → Onaylandı → İlk Sipariş → Tekrar Sipariş.
+E-mail bulunduğunda, mail gönderildiğinde, olumlu yanıt geldiğinde ya da evrak
+istendiğinde aşama **otomatik olarak ileri** taşınıyor (asla geriye almıyor) —
+elle taşımak istersen açılır menüden istediğin aşamayı seçebilirsin. "🧭 CRM
+Pipeline" panelinden (kategori ağacının hemen altında) her aşamada kaç marka
+olduğunu görebilir, bir aşamaya tıklayarak tabloyu o aşamayla filtreleyebilir,
+"✏️ Aşamaları Düzenle" ile aşamaları yeniden adlandırabilir/sıralayabilir/
+ekleyip çıkarabilir ya da "Varsayılana Sıfırla" ile 10 aşamaya geri
+dönebilirsin.
+
 ## Özet / Analitik
 
 Panelin üstünden "Özet" sayfasına gidip toplam marka sayısı, e-mail bulma oranı, gönderim
@@ -798,6 +826,81 @@ sağlayan bir sistem yoktur, göndermeden önce kontrol etme alışkanlığını
 - Bu sürüm tek kullanıcı için tasarlandı; veriler (marka listesi, gönderim geçmişi) sadece
   senin bilgisayarındaki `data/app.sqlite` dosyasında tutulur, başka kimseyle paylaşılmaz.
 
+## v46: 20 yeni özellik (tek seferde eklendi)
+
+Bu sürüm, önceden istenen 20 büyük özelliğin TAMAMINI tek seferde ekler. Mevcut sistemi
+BOZMADAN, senkronize şekilde çalışacak şekilde tasarlandı — hiçbir özellik varsayılan
+olarak zorunlu değildir, hepsi ya opt-in'dir ya da hiçbir şey yapılandırılmadığında eski
+davranışı birebir korur.
+
+- **Not/Görev/Hatırlatma sistemi**: her markaya tarihli görevler eklenebilir (Marka
+  Detayı > Görevler sekmesi). Dashboard'daki "Bugün Yapılacaklar" paneli, tarihi geçmiş/
+  bugüne denk gelen görevleri otomatik listeler.
+- **Dashboard "Bugün Yapılacaklar" paneli**: Dashboard sayfasının en üstünde — bekleyen
+  görevler, değerlendirilmemiş yanıtlar, belge isteyenler, yüksek öncelikli (AI) markalar,
+  olası tekrar (duplicate) grupları ve otomatik gönderim durumunu tek yerde gösterir.
+- **Gelişmiş fuzzy duplicate tespiti**: "Nike Inc.", "NIKE LLC", "Nike" gibi farklı
+  yazımları (şirket eki, noktalama, küçük yazım farkı) tespit eder ve incelemen için
+  ayrı bir grup olarak sunar (`/api/brands/fuzzy-duplicates`) — otomatik SİLMEZ, sen
+  hangi kaydı tutacağına karar verirsin.
+- **Wholesale/Distributor/Dealer sayfası otomatik tespiti**: e-mail bulma sırasında
+  markanın sitesinde "become a dealer", "wholesale", "trade account" gibi sayfalar
+  bulunursa link otomatik kaydedilir (Marka Detayı > Wholesale Form sekmesinde görünür).
+- **Gelişmiş arama motoru**: Marka Keşif tablosunun üstünde artık marka adı, e-mail,
+  website, kategori, ülke, not ve AI etiketleri dahil geniş bir arama kutusu var.
+- **Gelişmiş filtreleme**: güven seviyesi, AI önceliği, wholesale sayfası varlığı ve
+  minimum Opportunity Score gibi ek filtreler eklendi (mevcut durum/kategori/CRM
+  filtreleriyle birlikte çalışır).
+- **Gönderim öncesi spam/kalite skoru**: mail şablonu editörünün altında canlı güncellenen
+  0-100 arası bir "Kalite Skoru" rozeti (spam kelimeleri, aşırı ünlem, kişiselleştirme
+  eksikliği gibi faktörlere göre).
+- **Marka bazlı Timeline**: Marka Detayı > Timeline sekmesi, o markayla ilgili TÜM
+  geçmişi (gönderimler, aşama değişimleri, evrak yüklemeleri, yanıt/bounce) kronolojik
+  sırada gösterir.
+- **Evrak yönetim sistemi**: Marka Detayı > Evraklar sekmesinden Resale Certificate,
+  W-9, EIN Letter, katalog gibi dosyalar marka bazında yüklenip indirilebilir/silinebilir.
+- **AI kişiselleştirme / Lead Priority + etiketleme / yanıt sınıflandırma + taslak yanıt**
+  (hepsi isteğe bağlı): Marka Detayı > AI Analiz sekmesinden tek tıkla çalıştırılır.
+  Varsayılan olarak KAPALIDIR — sadece Ayarlar'da bir `ANTHROPIC_API_KEY` tanımlıysa ve
+  sen butona bastığında çalışır, arka planda otomatik hiçbir şey yapmaz (gereksiz API
+  maliyeti oluşturmaz).
+- **Subject Rotation + A/B test motoru**: Ayarlar'da birden fazla konu satırı/gövde
+  varyantı tanımlanabilir; toplu/otomatik gönderimlerde her seferinde rastgele biri
+  seçilir, hangi varyantın kaç yanıt/olumlu yanıt aldığı Dashboard'daki grafikte
+  karşılaştırılabilir. Hiç varyant tanımlanmazsa (varsayılan) eski davranış (tek sabit
+  şablon) aynen devam eder. Ayrıca otomatik/toplu gönderimlere görünmez bir açılma
+  (open) takip pikseli eklenir (sadece `PUBLIC_URL`/Render'ın `RENDER_EXTERNAL_URL`'i
+  tanımlıysa).
+- **Çoklu gönderici hesabı altyapısı (round robin)**: Ayarlar'da ek Gmail hesapları
+  tanımlanabilir; gönderimler hesaplar arasında (o gün en az gönderen öncelikli olacak
+  şekilde) dağıtılır. Hiç ek hesap eklenmezse (varsayılan) sistem eskisi gibi TEK
+  hesaptan (.env'deki `EMAIL_USER`) göndermeye devam eder.
+- **Gelişmiş analiz paneli**: Dashboard'a Chart.js ile çizilen grafikler eklendi — son 30
+  günün gönderim/yanıt/olumlu trendi, CRM Pipeline hunisi, A/B test karşılaştırması.
+- **Amazon analiz modülü**: Dashboard'da portföy genelinde ortalama ciro/fiyat/yorum/puan,
+  rekabet dağılımı (düşük/orta/yüksek) ve en değerli 10 kategori özeti.
+- **Excel/PDF raporlama sistemi**: Dashboard'daki "Excel Raporu İndir" / "PDF Raporu
+  İndir" butonlarıyla, genel özet + CRM dağılımı + kategoriler + tüm markaların tam
+  listesini içeren tek bir dosya indirilebilir.
+- **Playwright ile toptan satış formu otomatik doldurma** (isteğe bağlı): Marka Detayı >
+  Wholesale Form sekmesinden, tespit edilen wholesale sayfası açılıp form alanları
+  (isim/e-mail/şirket/telefon/mesaj) otomatik doldurulur ve bir ekran görüntüsü
+  sunulur — **form ASLA otomatik gönderilmez**, sen inceleyip kendin gönderirsin. Bu
+  özellik `playwright` paketini GEREKTİRİR ama bilerek `package.json`'a eklenmedi (npm
+  install'ı yavaşlatıp Render deploy'unu bozma riski olmasın diye). Kullanmak istersen
+  sunucuda: `npm install playwright && npx playwright install chromium`.
+- **GitHub Actions CI**: `.github/workflows/test.yml`, her push/PR'da `npm test`'i
+  otomatik çalıştırır — deploy etmeden önce bir bozulmayı fark etmeni sağlar.
+- **100.000+ marka için performans optimizasyonu**: `brands`/`tasks`/`brand_events`/
+  `brand_documents` tablolarına en sık sorgulanan alanlar (status, batch, crm_stage,
+  main_category, email, opportunity_score, brand_id) için veritabanı indeksleri eklendi.
+
+### v46 sonrası yeni ortam değişkenleri (hepsi opsiyonel)
+
+- `ANTHROPIC_API_KEY`: AI kişiselleştirme/öncelik/yanıt sınıflandırma özellikleri için.
+- `PUBLIC_URL`: A/B test açılma (open) takip pikseli için (Render'da genelde otomatik
+  `RENDER_EXTERNAL_URL` kullanılır, ayrıca tanımlamana gerek yoktur).
+
 ## Windows kullanıyorsan
 
 `start.command` sadece Mac'te çalışır. Windows'ta:
@@ -815,19 +918,33 @@ brand-outreach-single-user/
   src/
     server.js             # Express sunucusu
     db.js                 # SQLite şeması (settings, brands, send_log)
-    routes/settings.js     # Profil/imza ayarları
-    routes/brands.js       # Excel yükleme, e-mail bulma, gönderim
-    routes/tracking.js     # Yanıt kontrolü + otomatik follow-up + haftalık özet + güvenlik freni
+    routes/settings.js     # Profil/imza ayarları + CRM pipeline + A/B test + çoklu hesap ayarları
+    routes/brands.js       # Excel yükleme, e-mail bulma, gönderim, CRM, fuzzy dedup, timeline, wholesale form
+    routes/tracking.js     # Yanıt kontrolü + otomatik follow-up + haftalık özet + güvenlik freni + açılma pikseli
     routes/suppression.js  # Kalıcı "bir daha yazma" listesi API'si
-    services/mailer.js     # Gmail App Password ile mail gönderme (nodemailer) + CAN-SPAM footer + ek dosya desteği
-    services/emailFinder.js # Marka -> e-mail bulma mantığı (Amazon storefront + LinkedIn + WHOIS sinyalleri dahil)
+    routes/tasks.js         # v46: Not/Görev/Hatırlatma sistemi
+    routes/documents.js     # v54: Evrak yönetim sistemi
+    routes/aiFeatures.js    # v55/56/57: AI kişiselleştirme, öncelik/etiket, yanıt sınıflandırma (opt-in)
+    routes/dashboard.js     # v47: "Bugün Yapılacaklar" akıllı paneli
+    routes/analytics.js     # Özet istatistikler + zaman serisi + A/B test + Amazon analizi + Excel/PDF rapor
+    services/mailer.js     # Gmail App Password ile mail gönderme (nodemailer) + CAN-SPAM footer + çoklu hesap + açılma pikseli
+    services/mailerHelpers.js # DB'siz saf mantık (round robin sıralama, A/B varyant seçimi) — test edilebilir
+    services/emailFinder.js # Marka -> e-mail bulma mantığı (Amazon storefront + LinkedIn + WHOIS + wholesale sayfası tespiti dahil)
     services/inboxChecker.js # Gmail IMAP ile yanıt kontrolü + basit sentiment tahmini
     services/suppression.js  # Kalıcı "bir daha yazma" listesi mantığı
     services/backup.js       # Haftalık veritabanı yedeği mail eki olarak gönderme
     services/dnsCheck.js     # SPF/DKIM/DMARC canlı DNS doğrulaması
     services/ai.js           # Anthropic Claude API çağrıları (model seçimi dahil)
-  public/                 # Panel (index.html) + Gönderim Takibi (tracking.html)
+    services/opportunityScore.js # Opportunity Score (0-100) hesaplama
+    services/crmPipeline.js  # CRM Pipeline aşama mantığı (sadece ileri taşır)
+    services/fuzzyDedup.js   # Fuzzy duplicate tespiti (şirket eki/yazım farkı)
+    services/documents.js    # Evrak dosyalarını diske kaydetme
+    services/events.js       # Marka bazlı Timeline olay kaydı
+    services/formFiller.js   # Playwright ile wholesale form doldurma (opsiyonel, lazy-load)
+    services/reporting.js    # Excel/PDF rapor üretimi
+  public/                 # Panel (index.html) + Gönderim Takibi (tracking.html) + Dashboard (analytics.html)
   tests/                  # Kalıcı otomatik test seti (npm test ile çalışır)
+  .github/workflows/test.yml # v64: GitHub Actions CI
   sample_brands.csv       # Test için örnek marka listesi
   .env.example
 ```

@@ -3,9 +3,59 @@ const multer = require("multer");
 const crypto = require("crypto");
 const XLSX = require("xlsx");
 const db = require("../db");
-const { findBrandEmail } = require("../services/emailFinder");
+const { findBrandEmail, detectWholesalePage } = require("../services/emailFinder");
 const mailer = require("../services/mailer");
 const { isSuppressed } = require("../services/suppression");
+const { computeOpportunityScore } = require("../services/opportunityScore");
+const { getPipelineStages, advanceStage } = require("../services/crmPipeline");
+const { logEvent } = require("../services/events");
+const { findFuzzyDuplicateGroups } = require("../services/fuzzyDedup");
+const { pickVariant, safeParseArray } = require("../services/mailerHelpers");
+const formFiller = require("../services/formFiller");
+
+// find-email sonucu geldiğinde ya da yeni bir marka eklendiğinde Opportunity
+// Score'u yeniden hesaplayıp DB'ye yazar — panelde her zaman güncel kalsın diye.
+function recomputeAndSaveScore(brand) {
+  const { score, breakdown } = computeOpportunityScore(brand);
+  db.prepare("UPDATE brands SET opportunity_score = ?, opportunity_score_breakdown = ? WHERE id = ?").run(
+    score,
+    JSON.stringify(breakdown),
+    brand.id
+  );
+  return score;
+}
+
+// Wholesale/Distributor/Dealer sayfası tespiti (v49) — e-mail bulma akışının
+// SONUNDA, best-effort olarak çalışır: hata olsa da ya da hiçbir şey bulunamasa
+// da ana akışı ASLA bozmaz/durdurmaz (try/catch içinde, sonucu sadece varsa
+// kaydeder). Zaten tespit edilmişse (wholesale_page_url doluysa) tekrar taramaz.
+async function maybeDetectWholesalePage(brand) {
+  if (!brand.website || brand.wholesale_page_url) return;
+  try {
+    const url = await detectWholesalePage(brand.website);
+    if (url) {
+      db.prepare("UPDATE brands SET wholesale_page_url = ? WHERE id = ?").run(url, brand.id);
+      logEvent(brand.id, "wholesale_page_found", url);
+    }
+  } catch (e) {
+    // sessizce geç — bu tamamen bonus bir sinyal, e-mail bulma sonucunu etkilemez
+  }
+}
+
+// Bir markayı CRM pipeline'da (varsa ilgili aşama tanımlıysa) ileri taşır —
+// asla geri almaz. Kullanıcı pipeline'ı ayarlardan değiştirmiş olabileceği için
+// güncel aşama listesini her seferinde settings'ten okuyoruz.
+function advanceCrmStage(brandId, currentStage, targetKey) {
+  const settings = db.prepare("SELECT crm_pipeline_stages FROM settings WHERE id = 1").get();
+  const stages = getPipelineStages(settings);
+  const next = advanceStage(currentStage, targetKey, stages);
+  if (next !== currentStage) {
+    db.prepare("UPDATE brands SET crm_stage = ? WHERE id = ?").run(next, brandId);
+    const label = (stages.find((s) => s.key === next) || {}).label || next;
+    logEvent(brandId, "stage_changed", `Aşama: ${label}`);
+  }
+  return next;
+}
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -106,9 +156,10 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
          batch, batch_name, batch_uploaded_at, name, name_normalized, website, email, email_source, confidence, status, last_error,
          brand_score, main_category, subcategory, est_monthly_revenue, est_monthly_sales, avg_price,
          avg_fba_sellers, avg_sellers, dominant_seller, sales_percentage, amazon_in_stock_rate,
-         avg_rating, total_reviews, growth_12m, product_count, storefront_url, country
+         avg_rating, total_reviews, growth_12m, product_count, storefront_url, country,
+         opportunity_score, opportunity_score_breakdown, crm_stage
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // Marka adı (normalize edilmiş) sistemde herhangi bir yüklemede/batch'te zaten
@@ -156,6 +207,20 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
 
         existingNames.add(nameNorm);
 
+        // Website henüz aranmadığı için Opportunity Score'un "web sitesi güveni"
+        // bileşeni bu aşamada nötr çıkar — e-mail bulunduğunda (find-email) skor
+        // otomatik olarak yeniden hesaplanıp güncellenir.
+        const { score: initialScore, breakdown: initialBreakdown } = computeOpportunityScore({
+          brand_score: enrichment.brand_score,
+          est_monthly_revenue: enrichment.est_monthly_revenue,
+          total_reviews: enrichment.total_reviews,
+          main_category: enrichment.main_category,
+          website: null,
+          confidence: null,
+          avg_sellers: enrichment.avg_sellers,
+          avg_fba_sellers: enrichment.avg_fba_sellers,
+        });
+
         insert.run(
           batch, batchName, batchUploadedAt, name, nameNorm, website, null, null, "unknown", "pending", null,
           enrichment.brand_score, enrichment.main_category, enrichment.subcategory,
@@ -163,7 +228,8 @@ router.post("/api/brands/upload", upload.single("file"), (req, res) => {
           enrichment.avg_fba_sellers, enrichment.avg_sellers, enrichment.dominant_seller,
           enrichment.sales_percentage, enrichment.amazon_in_stock_rate, enrichment.avg_rating,
           enrichment.total_reviews, enrichment.growth_12m, enrichment.product_count,
-          enrichment.storefront_url, enrichment.country
+          enrichment.storefront_url, enrichment.country,
+          initialScore, JSON.stringify(initialBreakdown), "new_lead"
         );
       }
     });
@@ -261,6 +327,40 @@ router.post("/api/brands/dedupe", (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Tekilleştirme sırasında hata oluştu: " + err.message });
   }
+});
+
+// v48: Yukarıdaki /api/brands/dedupe SADECE birebir aynı adları temizler. Bu uç
+// nokta, "Nike Inc." / "NIKE LLC" gibi farklı YAZIMLARI (şirket eki, noktalama,
+// küçük yazım farkı) tespit edip kullanıcıya İNCELEMESİ için sunar — otomatik
+// SİLMEZ, çünkü fuzzy eşleşme yanlış pozitif üretebilir (ör. "Nike Golf" farklı
+// bir marka olabilir). Kullanıcı gördüğü gruptan hangi kayıtları silmek
+// istediğine /api/brands/fuzzy-duplicates/merge ile kendisi karar verir.
+router.get("/api/brands/fuzzy-duplicates", (req, res) => {
+  const brands = db.prepare("SELECT id, name, status, email, created_at FROM brands").all();
+  const groups = findFuzzyDuplicateGroups(brands);
+  // En büyük gruplar üstte, kullanıcı en çok etkiyi yapacak gruplardan başlasın.
+  groups.sort((a, b) => b.brands.length - a.brands.length);
+  res.json({ ok: true, groups, totalGroups: groups.length });
+});
+
+// Kullanıcının bir fuzzy grup içinde incelettikten sonra seçtiği kayıtları siler
+// (keepId hariç). send_log kayıtları da birlikte temizlenir (dedupe route'uyla aynı mantık).
+router.post("/api/brands/fuzzy-duplicates/merge", (req, res) => {
+  const { keepId, removeIds } = req.body || {};
+  if (!keepId || !Array.isArray(removeIds) || removeIds.length === 0) {
+    return res.status(400).json({ error: "keepId ve removeIds (dizi) gerekli." });
+  }
+  const ids = removeIds.filter((id) => id !== keepId);
+  const deleteLogs = db.prepare("DELETE FROM send_log WHERE brand_id = ?");
+  const deleteBrand = db.prepare("DELETE FROM brands WHERE id = ?");
+  const runMerge = db.transaction(() => {
+    for (const id of ids) {
+      deleteLogs.run(id);
+      deleteBrand.run(id);
+    }
+  });
+  runMerge();
+  res.json({ ok: true, removed: ids.length });
 });
 
 // Aynı e-posta adresi başka bir markaya ait olarak zaten "sahiplenilmiş" mi?
@@ -378,7 +478,13 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
       brand.id
     );
     const updated = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
-    res.json({ brand: updated });
+    // Website/confidence artık bilindiği için Opportunity Score'u güncelle; e-mail
+    // bulunduysa CRM pipeline'ı da "E-mail Bulundu" aşamasına ilerlet (asla geri almaz).
+    recomputeAndSaveScore(updated);
+    if (updated.status === "found") advanceCrmStage(updated.id, updated.crm_stage, "email_found");
+    await maybeDetectWholesalePage(updated);
+    const final = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
+    res.json({ brand: final });
   } catch (err) {
     console.error(err);
     db.prepare("UPDATE brands SET status = 'error', last_error = ? WHERE id = ?").run(
@@ -431,6 +537,10 @@ async function processFindAllQueue() {
         result.phone || null,
         brand.id
       );
+      const updatedBrand = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
+      recomputeAndSaveScore(updatedBrand);
+      if (updatedBrand.status === "found") advanceCrmStage(updatedBrand.id, updatedBrand.crm_stage, "email_found");
+      await maybeDetectWholesalePage(updatedBrand);
     } catch (err) {
       db.prepare("UPDATE brands SET status = 'error', last_error = ? WHERE id = ?").run(
         err.message,
@@ -581,15 +691,22 @@ router.post("/api/brands/:id/send", async (req, res) => {
   }
 
   const { subject, body } = req.body;
+  // v59: tek marka manuel gönderiminde de round robin uygulanır (ek hesap
+  // tanımlanmamışsa her zaman birincil .env hesabını döndürür, davranış değişmez).
+  // v58: burada subject/body kullanıcı o an elle yazdığı/düzenlediği için A/B
+  // varyantları BİLEREK uygulanmıyor — sadece toplu/otomatik gönderimlerde devreye girer.
+  const account = mailer.pickSenderAccount();
   try {
-    await mailer.sendMail({ to: brand.email, subject, body });
+    await mailer.sendMail({ to: brand.email, subject, body, account, trackOpenBrandId: brand.id });
+    if (account) mailer.recordAccountSend(account.email);
     db.prepare(
-      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
-    ).run(brand.id);
+      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_via_account = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+    ).run(account ? account.email : null, brand.id);
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
       brand.id,
       `${brand.email} adresine gönderildi.`
     );
+    advanceCrmStage(brand.id, brand.crm_stage, "email_sent");
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -703,17 +820,40 @@ async function runAutoSend() {
     return { sent: 0, reason: "no_candidates_in_business_hours" };
   }
 
-  const subject = fillTemplateLocal(settings.main_subject, candidate.name);
-  const body = fillTemplateLocal(settings.main_body, candidate.name);
+  // v58: subject_variants/body_variants tanımlıysa (A/B test), her otomatik
+  // gönderimde rastgele bir varyant seçilir; tanımlı DEĞİLSE (varsayılan) eskisi
+  // gibi main_subject/main_body şablonu birebir kullanılır — davranış değişmez.
+  const subjectVariants = safeParseArray(settings.subject_variants);
+  const bodyVariants = safeParseArray(settings.body_variants);
+  const chosenSubjectTemplate = pickVariant(subjectVariants, settings.main_subject);
+  const chosenBodyTemplate = pickVariant(bodyVariants, settings.main_body);
+  const subject = fillTemplateLocal(chosenSubjectTemplate, candidate.name);
+  const body = fillTemplateLocal(chosenBodyTemplate, candidate.name);
+  // v59: birden fazla gönderici hesabı tanımlıysa aralarında round robin yapar;
+  // tanımlı DEĞİLSE (varsayılan) her zaman .env'deki birincil hesabı döndürür.
+  const account = mailer.pickSenderAccount();
   try {
-    await mailer.sendMail({ to: candidate.email, subject, body });
+    await mailer.sendMail({
+      to: candidate.email,
+      subject,
+      body,
+      account,
+      trackOpenBrandId: candidate.id,
+    });
+    if (account) mailer.recordAccountSend(account.email);
     db.prepare(
-      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
-    ).run(candidate.id);
+      `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_variant_subject = ?, sent_variant_body = ?, sent_via_account = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+    ).run(
+      subjectVariants.length > 0 ? chosenSubjectTemplate : null,
+      bodyVariants.length > 0 ? chosenBodyTemplate : null,
+      account ? account.email : null,
+      candidate.id
+    );
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
       candidate.id,
       `Otomatik günlük gönderim (limit: ${limit}/gün): ${candidate.email}`
     );
+    advanceCrmStage(candidate.id, candidate.crm_stage, "email_sent");
     return { sent: 1, brand: candidate.name };
   } catch (err) {
     db.prepare("UPDATE brands SET status = 'error', last_error = ? WHERE id = ?").run(err.message, candidate.id);
@@ -747,6 +887,13 @@ let sendJob = {
 
 async function processSendQueue() {
   sendJob.running = true;
+  // v58: Ayarlar'da subject_variants/body_variants tanımlıysa, toplu gönderimde
+  // panelde yazılan sabit subject/body YERİNE her marka için rastgele bir varyant
+  // kullanılır (A/B test). Tanımlı DEĞİLSE (varsayılan) eskisi gibi sendJob.subject/
+  // body birebir kullanılır — davranış değişmez.
+  const abSettings = db.prepare("SELECT subject_variants, body_variants FROM settings WHERE id = 1").get();
+  const subjectVariants = safeParseArray(abSettings && abSettings.subject_variants);
+  const bodyVariants = safeParseArray(abSettings && abSettings.body_variants);
   while (sendJob.remainingIds.length > 0 && sendJob.running) {
     const id = sendJob.remainingIds.shift();
     const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(id);
@@ -767,17 +914,27 @@ async function processSendQueue() {
       sendJob.failedCount++;
       continue;
     }
-    const subject = fillTemplateLocal(sendJob.subject, brand.name);
-    const body = fillTemplateLocal(sendJob.body, brand.name);
+    const chosenSubjectTemplate = pickVariant(subjectVariants, sendJob.subject);
+    const chosenBodyTemplate = pickVariant(bodyVariants, sendJob.body);
+    const subject = fillTemplateLocal(chosenSubjectTemplate, brand.name);
+    const body = fillTemplateLocal(chosenBodyTemplate, brand.name);
+    const account = mailer.pickSenderAccount();
     try {
-      await mailer.sendMail({ to: brand.email, subject, body });
+      await mailer.sendMail({ to: brand.email, subject, body, account, trackOpenBrandId: brand.id });
+      if (account) mailer.recordAccountSend(account.email);
       db.prepare(
-        `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
-      ).run(brand.id);
+        `UPDATE brands SET status = 'sent', sent_at = CURRENT_TIMESTAMP, sent_variant_subject = ?, sent_variant_body = ?, sent_via_account = ?, ${RESET_TRACKING_ON_SEND_SQL} WHERE id = ?`
+      ).run(
+        subjectVariants.length > 0 ? chosenSubjectTemplate : null,
+        bodyVariants.length > 0 ? chosenBodyTemplate : null,
+        account ? account.email : null,
+        brand.id
+      );
       db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
         brand.id,
         `${brand.email} adresine gönderildi (toplu gönderim).`
       );
+      advanceCrmStage(brand.id, brand.crm_stage, "email_sent");
       sendJob.sentCount++;
     } catch (err) {
       db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'error', ?)").run(
@@ -849,6 +1006,151 @@ router.get("/api/brands/send-batch/status", (req, res) => {
     failedCount: sendJob.failedCount,
     currentBrandName: sendJob.currentBrandName,
   });
+});
+
+// Bir markayı CRM pipeline'da manuel olarak taşır — otomatik ilerlemenin
+// aksine (bkz. advanceCrmStage) burada kullanıcı GERİYE de alabilir (ör. yanlışlıkla
+// ilerlemiş bir markayı düzeltmek için), çünkü bu elle yapılan bilinçli bir seçim.
+router.put("/api/brands/:id/crm-stage", (req, res) => {
+  const { stage } = req.body || {};
+  if (!stage) return res.status(400).json({ error: "Aşama (stage) belirtilmedi." });
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
+  const settings = db.prepare("SELECT crm_pipeline_stages FROM settings WHERE id = 1").get();
+  const stages = getPipelineStages(settings);
+  if (!stages.some((s) => s.key === stage)) {
+    return res.status(400).json({ error: "Geçersiz pipeline aşaması." });
+  }
+  db.prepare("UPDATE brands SET crm_stage = ? WHERE id = ?").run(stage, brand.id);
+  const label = (stages.find((s) => s.key === stage) || {}).label || stage;
+  logEvent(brand.id, "stage_changed_manual", `Aşama (elle): ${label}`);
+  res.json({ ok: true, crm_stage: stage });
+});
+
+// v53: Marka bazlı Timeline — send_log (gönderim denemeleri), brand_events (aşama
+// değişimi, evrak yükleme, vs.) ve brands tablosundaki yanıt/bounce bilgisini tek
+// kronolojik listede birleştirir. Sadece OKUMA yapar, hiçbir şeyi değiştirmez.
+router.get("/api/brands/:id/timeline", (req, res) => {
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
+
+  const events = [];
+
+  events.push({
+    type: "created",
+    label: "Marka eklendi",
+    detail: brand.batch_name || null,
+    at: brand.batch_uploaded_at || brand.created_at || null,
+  });
+
+  const sendLogs = db
+    .prepare("SELECT * FROM send_log WHERE brand_id = ? ORDER BY created_at ASC")
+    .all(brand.id);
+  for (const row of sendLogs) {
+    events.push({
+      type: row.status === "sent" ? "email_sent" : "send_error",
+      label: row.status === "sent" ? "E-posta gönderildi" : "Gönderim hatası",
+      detail: row.message || null,
+      at: row.created_at,
+    });
+  }
+
+  const brandEvents = db
+    .prepare("SELECT * FROM brand_events WHERE brand_id = ? ORDER BY created_at ASC")
+    .all(brand.id);
+  for (const row of brandEvents) {
+    events.push({
+      type: row.event_type,
+      label: eventTypeLabel(row.event_type),
+      detail: row.message || null,
+      at: row.created_at,
+    });
+  }
+
+  if (brand.replied) {
+    events.push({
+      type: "replied",
+      label: brand.reply_sentiment === "positive" ? "Olumlu yanıt alındı" : "Yanıt alındı",
+      detail: brand.reply_snippet || null,
+      at: brand.last_checked_at || null,
+    });
+  }
+  if (brand.bounced) {
+    events.push({
+      type: "bounced",
+      label: "E-posta geri döndü (bounce)",
+      detail: brand.last_error || null,
+      at: brand.last_checked_at || null,
+    });
+  }
+
+  events.sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+  res.json({ brand: { id: brand.id, name: brand.name }, timeline: events });
+});
+
+function eventTypeLabel(type) {
+  const map = {
+    stage_changed: "CRM aşaması ilerledi",
+    stage_changed_manual: "CRM aşaması değiştirildi (elle)",
+    document_uploaded: "Evrak yüklendi",
+    ai_personalized: "AI kişiselleştirme yapıldı",
+    ai_priority_tagged: "AI öncelik/etiket verildi",
+    ai_reply_classified: "AI yanıtı sınıflandırdı",
+    wholesale_page_found: "Wholesale sayfası bulundu",
+  };
+  return map[type] || type;
+}
+
+// Opportunity Score'u tek bir marka için ya da (ids gönderilmezse) TÜM markalar
+// için yeniden hesaplar. Excel'i yeni yükledikten hemen sonra skor zaten otomatik
+// hesaplanıyor — bu uç nokta asıl, formülü/ağırlıkları güncelledikten sonra ESKİ
+// (zaten sistemde olan) markaları da yeni formüle göre toplu güncellemek için var.
+// v63: Wholesale/Distributor başvuru formunu otomatik doldurur (Playwright ile,
+// isteğe bağlı — bkz. services/formFiller.js). ASLA otomatik göndermez: sadece
+// doldurulmuş formun bir ekran görüntüsünü döner, kullanıcı inceleyip kendisi
+// gönderir (URL'yi elle açıp aynı bilgileri kopyalayarak ya da tarayıcıda formu
+// bulup göndererek). url gövdede verilmezse markanın v49'da tespit edilen
+// wholesale_page_url'i kullanılır.
+router.get("/api/form-filler/status", (req, res) => {
+  res.json({ available: formFiller.isAvailable() });
+});
+
+router.post("/api/brands/:id/fill-wholesale-form", async (req, res) => {
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
+  const url = (req.body && req.body.url) || brand.wholesale_page_url;
+  if (!url) {
+    return res.status(400).json({
+      error: "Bu marka için bir wholesale/distributor sayfası tespit edilmemiş ve elle bir URL de verilmedi.",
+    });
+  }
+  const settings = db.prepare("SELECT * FROM settings WHERE id = 1").get() || {};
+  const fillData = {
+    name: settings.name || "",
+    email: process.env.EMAIL_USER || "",
+    company: settings.company || "",
+    phone: "",
+    message: fillTemplateLocal(settings.offer_text || settings.main_body || "", brand.name),
+  };
+  try {
+    const result = await formFiller.fillWholesaleForm(url, fillData);
+    logEvent(brand.id, "wholesale_form_filled", `${url} (${result.filledFields.length} alan dolduruldu)`);
+    res.json({ ok: true, url, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/api/brands/recompute-scores", (req, res) => {
+  const { ids } = req.body || {};
+  const targets =
+    Array.isArray(ids) && ids.length > 0
+      ? ids.map((id) => db.prepare("SELECT * FROM brands WHERE id = ?").get(id)).filter(Boolean)
+      : db.prepare("SELECT * FROM brands").all();
+  for (const brand of targets) {
+    recomputeAndSaveScore(brand);
+  }
+  res.json({ ok: true, updated: targets.length });
 });
 
 module.exports = router;

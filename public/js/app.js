@@ -15,6 +15,11 @@ let currentPage = 1;
 // etiketinde ("X dosyası, Y marka") göstermek için.
 let latestBatchName = null;
 let latestBatchUploadedAt = null;
+// CRM Pipeline: kullanıcının ayarlardan yeniden adlandırıp sıralayabildiği aşama
+// listesi (bkz. GET /api/crm/stages) ve — Kategori Ağacı'yla aynı desende — durum
+// sekmelerinden BAĞIMSIZ, ek bir AND filtresi.
+let pipelineStages = [];
+let crmStageFilter = null;
 
 const emailStatusEl = document.getElementById("emailStatus");
 const brandsBody = document.getElementById("brandsBody");
@@ -152,6 +157,291 @@ function normalizeCategoryName(b) {
 function matchesCategory(b) {
   if (!categoryFilter) return true;
   return normalizeCategoryName(b) === categoryFilter;
+}
+
+function matchesCrmStage(b) {
+  if (!crmStageFilter) return true;
+  return b.crm_stage === crmStageFilter;
+}
+
+// v50: Gelişmiş arama motoru — marka adı, e-mail, website, kategori, ülke, not
+// ve AI etiketleri dahil geniş bir metin havuzunda arar (tek satırlık, sunucuya
+// gitmeden anında filtreler; binlerce marka için bile pratikte gecikme yaratmaz).
+let searchQuery = "";
+
+function brandSearchHaystack(b) {
+  let tags = "";
+  try {
+    const parsed = JSON.parse(b.ai_tags || "[]");
+    if (Array.isArray(parsed)) tags = parsed.join(" ");
+  } catch (e) {
+    // ai_tags henüz yok/bozuksa arama sonucunu etkilemesin
+  }
+  return [
+    b.name,
+    b.email,
+    b.website,
+    b.main_category,
+    b.subcategory,
+    b.notes,
+    b.country,
+    b.dominant_seller,
+    b.wholesale_page_url,
+    tags,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function matchesSearch(b) {
+  if (!searchQuery) return true;
+  return brandSearchHaystack(b).includes(searchQuery);
+}
+
+// v51: Gelişmiş filtreleme — durum sekmeleri/kategori/CRM aşamasının üzerine,
+// güven seviyesi, AI önceliği, wholesale sayfası varlığı ve minimum Opportunity
+// Score gibi ek kriterler ekler. Hiçbiri seçilmemişse (varsayılan) davranış değişmez.
+let advancedFilters = { confidence: "", aiPriority: "", hasWholesale: false, minScore: "" };
+
+function matchesAdvancedFilters(b) {
+  if (advancedFilters.confidence && b.confidence !== advancedFilters.confidence) return false;
+  if (advancedFilters.aiPriority && b.ai_priority !== advancedFilters.aiPriority) return false;
+  if (advancedFilters.hasWholesale && !b.wholesale_page_url) return false;
+  if (advancedFilters.minScore !== "" && (Number(b.opportunity_score) || 0) < Number(advancedFilters.minScore)) return false;
+  return true;
+}
+
+function matchesAllFilters(b) {
+  return (
+    matchesFilter(b, currentFilter) &&
+    matchesCategory(b) &&
+    matchesCrmStage(b) &&
+    matchesSearch(b) &&
+    matchesAdvancedFilters(b)
+  );
+}
+
+// Marka satırının durum hücresinde, o markayı elle bir pipeline aşamasına
+// taşıyabileceğin küçük bir açılır menü. Aşama listesi henüz yüklenmediyse
+// (sayfa ilk açıldığında bir an için) hiçbir şey göstermez.
+function crmStageSelect(b) {
+  if (!pipelineStages || pipelineStages.length === 0) return "";
+  const options = pipelineStages
+    .map((s) => `<option value="${s.key}" ${b.crm_stage === s.key ? "selected" : ""}>${s.label}</option>`)
+    .join("");
+  return `<select class="crm-stage-select" data-id="${b.id}" title="CRM Pipeline aşamasını elle değiştir">${options}</select>`;
+}
+
+// CRM Pipeline'ın kategori ağacına benzer bir görselleştirmesi: her aşamada kaç
+// marka olduğunu gösterir, bir aşamaya tıklanınca tablo o aşamayla filtrelenir.
+// Sayılar her zaman anlık yüklü brands[] dizisinden hesaplanır (kategori ağacıyla
+// aynı desen) — böylece bir marka bulunduğunda/gönderildiğinde sunucuya tekrar
+// sorup beklemeden panel hemen güncellenir.
+function renderCrmPipelinePanel() {
+  const container = document.getElementById("crmPipeline");
+  if (!container || pipelineStages.length === 0) return;
+  const counts = {};
+  for (const b of brands) {
+    const key = b.crm_stage || "new_lead";
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const totalCount = brands.length;
+  const allRowHtml = `
+    <div class="category-row cat-all" data-stage="">
+      <span class="cat-name">Tümü</span>
+      <span class="cat-stat">${totalCount} marka</span>
+    </div>
+  `;
+  const rowsHtml = pipelineStages
+    .map((s) => {
+      const active = crmStageFilter === s.key ? " active" : "";
+      return `
+        <div class="category-row${active}" data-stage="${s.key}">
+          <span class="cat-name">${s.label}</span>
+          <span class="cat-stat">${counts[s.key] || 0} marka</span>
+        </div>
+      `;
+    })
+    .join("");
+  container.innerHTML = allRowHtml + rowsHtml;
+}
+
+async function loadCrmStages() {
+  try {
+    const res = await fetch("/api/crm/stages");
+    const data = await res.json();
+    pipelineStages = (data.stages || []).map((s) => ({ key: s.key, label: s.label }));
+    // loadBrands() daha önce bitip tabloyu render etmiş olabilir — o anda
+    // pipelineStages henüz boş olduğu için satırlardaki aşama seçici görünmemiş
+    // olabilir. Marka listesi zaten yüklendiyse tabloyu burada yeniden çiziyoruz
+    // ki seçiciler ve pipeline paneli hemen görünsün.
+    if (brands.length > 0) renderBrands();
+    else renderCrmPipelinePanel();
+  } catch (e) {
+    // sessizce geç — pipeline sadece bir görselleştirme, kritik değil
+  }
+}
+
+document.getElementById("crmPipeline").addEventListener("click", (e) => {
+  const row = e.target.closest(".category-row");
+  if (!row) return;
+  const stage = row.dataset.stage;
+  crmStageFilter = !stage || crmStageFilter === stage ? null : stage;
+  currentPage = 1;
+  renderBrands();
+});
+
+// --- Pipeline aşamalarını düzenleme (yeniden adlandırma/sıralama/ekleme/silme) ---
+// Çalışma kopyası: kullanıcı "Kaydet"e basana kadar sunucuya hiçbir şey gönderilmez.
+let pipelineEditorRows = [];
+
+function slugifyStageKey(label, existingKeys) {
+  let base = String(label || "stage")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (!base) base = "stage";
+  let key = base;
+  let n = 1;
+  while (existingKeys.includes(key)) {
+    key = `${base}_${n}`;
+    n++;
+  }
+  return key;
+}
+
+function renderPipelineEditor() {
+  const container = document.getElementById("pipelineEditorRows");
+  if (!container) return;
+  container.innerHTML = pipelineEditorRows
+    .map(
+      (s, i) => `
+      <div class="pipeline-editor-row" data-index="${i}" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+        <span class="muted" style="width:20px; text-align:right;">${i + 1}.</span>
+        <input type="text" class="pipeline-label-input" data-index="${i}" value="${String(s.label).replace(/"/g, "&quot;")}" style="flex:1;" />
+        <button class="small secondary pipeline-up-btn" data-index="${i}" title="Yukarı taşı" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="small secondary pipeline-down-btn" data-index="${i}" title="Aşağı taşı" ${i === pipelineEditorRows.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="small secondary pipeline-delete-btn" data-index="${i}" title="Bu aşamayı sil" ${pipelineEditorRows.length <= 1 ? "disabled" : ""}>🗑️</button>
+      </div>
+    `
+    )
+    .join("");
+
+  container.querySelectorAll(".pipeline-label-input").forEach((input) => {
+    input.addEventListener("input", () => {
+      pipelineEditorRows[Number(input.dataset.index)].label = input.value;
+    });
+  });
+  container.querySelectorAll(".pipeline-up-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.index);
+      if (i === 0) return;
+      [pipelineEditorRows[i - 1], pipelineEditorRows[i]] = [pipelineEditorRows[i], pipelineEditorRows[i - 1]];
+      renderPipelineEditor();
+    });
+  });
+  container.querySelectorAll(".pipeline-down-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.index);
+      if (i === pipelineEditorRows.length - 1) return;
+      [pipelineEditorRows[i + 1], pipelineEditorRows[i]] = [pipelineEditorRows[i], pipelineEditorRows[i + 1]];
+      renderPipelineEditor();
+    });
+  });
+  container.querySelectorAll(".pipeline-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (pipelineEditorRows.length <= 1) return;
+      const i = Number(btn.dataset.index);
+      if (!confirm(`"${pipelineEditorRows[i].label}" aşamasını silmek istediğine emin misin? Bu aşamadaki markaların verisi kaybolmaz, sadece listede görünmez.`)) return;
+      pipelineEditorRows.splice(i, 1);
+      renderPipelineEditor();
+    });
+  });
+}
+
+document.getElementById("editPipelineBtn").addEventListener("click", (e) => {
+  e.preventDefault();
+  const editor = document.getElementById("pipelineEditor");
+  const opening = editor.style.display === "none";
+  editor.style.display = opening ? "" : "none";
+  if (opening) {
+    pipelineEditorRows = pipelineStages.map((s) => ({ ...s }));
+    renderPipelineEditor();
+  }
+});
+
+document.getElementById("addStageBtn").addEventListener("click", () => {
+  const input = document.getElementById("newStageLabelInput");
+  const label = input.value.trim();
+  if (!label) return;
+  const key = slugifyStageKey(
+    label,
+    pipelineEditorRows.map((s) => s.key)
+  );
+  pipelineEditorRows.push({ key, label });
+  input.value = "";
+  renderPipelineEditor();
+});
+
+document.getElementById("savePipelineBtn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("pipelineEditorStatus");
+  const cleaned = pipelineEditorRows.map((s) => ({ key: s.key, label: (s.label || "").trim() || s.key }));
+  if (cleaned.length === 0) {
+    statusEl.textContent = "En az bir aşama olmalı.";
+    return;
+  }
+  const res = await fetch("/api/crm/stages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stages: cleaned }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    statusEl.textContent = data.error || "Kaydedilemedi.";
+    return;
+  }
+  statusEl.textContent = "✓ Kaydedildi.";
+  await loadCrmStages();
+  renderBrands();
+});
+
+document.getElementById("resetPipelineBtn").addEventListener("click", async () => {
+  if (!confirm("Pipeline aşamaları varsayılan 10 aşamaya sıfırlanacak (New Lead...Repeat Orders). Emin misin?")) return;
+  await fetch("/api/crm/stages/reset", { method: "POST" });
+  await loadCrmStages();
+  renderBrands();
+  document.getElementById("pipelineEditorStatus").textContent = "✓ Varsayılana sıfırlandı.";
+});
+
+// Opportunity Score (0-100): sunucuda Brand Score, tahmini ciro, yorum sayısı,
+// kategori, web sitesi güveni ve Amazon rekabetinden hesaplanan tek bir öncelik
+// puanı (bkz. src/services/opportunityScore.js). Renk kodu: yeşil (≥70) = güçlü
+// fırsat, sarı (40-69) = orta, gri (<40) = düşük öncelik. Kırılımı (hangi
+// bileşenden kaç puan geldiği) title (hover) metninde gösterilir.
+function opportunityBadge(b) {
+  if (b.opportunity_score === null || b.opportunity_score === undefined) return "";
+  const score = Math.round(b.opportunity_score);
+  const level = score >= 70 ? "high" : score >= 40 ? "medium" : "low";
+  let title = `Opportunity Score: ${score}/100`;
+  if (b.opportunity_score_breakdown) {
+    try {
+      const parts = JSON.parse(b.opportunity_score_breakdown).parts;
+      if (parts) {
+        title +=
+          "\nBrand Score: " + parts.brandScore +
+          " · Ciro: " + parts.revenue +
+          " · Yorum: " + parts.reviews +
+          " · Kategori: " + parts.category +
+          " · Web sitesi: " + parts.website +
+          " · Rekabet: " + parts.competition;
+      }
+    } catch (e) {
+      // Bozuk JSON — sadece skoru göster, kırılımı atla.
+    }
+  }
+  return `<span class="opportunity-badge opportunity-${level}" title="${title.replace(/"/g, "&quot;")}">🎯 ${score}</span>`;
 }
 
 // Her marka satırının isim hücresinin altında küçük bir "kategori · ciro" etiketi.
@@ -359,7 +649,7 @@ function renderPaginationBar(info) {
 
 function renderBrands() {
   brandsBody.innerHTML = "";
-  const visibleBrands = brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b));
+  const visibleBrands = brands.filter((b) => matchesAllFilters(b));
   const pageInfo = paginate(visibleBrands);
   renderPaginationBar(pageInfo);
   const { pageItems, start } = pageInfo;
@@ -375,7 +665,7 @@ function renderBrands() {
     tr.innerHTML = `
       <td><input type="checkbox" class="row-checkbox" data-id="${b.id}" ${checked} /></td>
       <td class="row-number">${rowNumber}</td>
-      <td>${b.name}${categoryChip(b)}</td>
+      <td>${b.name}${opportunityBadge(b)}${categoryChip(b)}</td>
       <td class="muted">${marketSummary(b)}</td>
       <td><input data-field="website" data-id="${b.id}" value="${b.website || ""}" /></td>
       <td>
@@ -386,7 +676,7 @@ function renderBrands() {
         ${contactLine}
         <input data-field="notes" data-id="${b.id}" value="${(b.notes || "").replace(/"/g, "&quot;")}" placeholder="Not ekle (ör. tekrar ara, fiyat bekliyor)" style="margin-top:4px; font-size:12px;" />
       </td>
-      <td>${badge(b.status)}${sentViaTag}</td>
+      <td>${badge(b.status)}${sentViaTag}${crmStageSelect(b)}</td>
       <td>
         <div class="actions-cell">
           <button class="small find-btn" data-id="${b.id}" title="E-mail ara">Ara</button>
@@ -413,6 +703,7 @@ function renderBrands() {
   updateSelectedCount();
   renderFilterTabs();
   renderCategoryTree();
+  renderCrmPipelinePanel();
 }
 
 function updateSelectedCount() {
@@ -421,6 +712,25 @@ function updateSelectedCount() {
 }
 
 function attachRowEvents() {
+  // CRM Pipeline aşamasını elle değiştirme — otomatik ilerlemenin aksine burada
+  // kullanıcı geriye de alabilir (bilinçli bir düzeltme olduğu için).
+  document.querySelectorAll(".crm-stage-select").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const id = sel.dataset.id;
+      const stage = sel.value;
+      const res = await fetch(`/api/brands/${id}/crm-stage`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage }),
+      });
+      if (res.ok) {
+        const idx = brands.findIndex((b) => String(b.id) === id);
+        if (idx !== -1) brands[idx].crm_stage = stage;
+        renderCrmPipelinePanel();
+      }
+    });
+  });
+
   document.querySelectorAll(".row-checkbox").forEach((cb) => {
     cb.addEventListener("change", () => {
       if (cb.checked) selectedIds.add(cb.dataset.id);
@@ -487,8 +797,7 @@ function attachRowEvents() {
   document.querySelectorAll(".detail-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const brand = brands.find((b) => String(b.id) === btn.dataset.id);
-      const steps = (brand.last_error || "Henüz aranmadı.").split(" | ").join("\n");
-      alert(`${brand.name} için yapılan adımlar:\n\n${steps}`);
+      if (brand) openBrandPanel(brand);
     });
   });
 
@@ -845,11 +1154,74 @@ function checkSpamTriggers(subject, body) {
   return found;
 }
 
+// v52: Gönderim öncesi spam/kalite skoru — checkSpamTriggers'ın bulduğu her
+// soruna (kelime/kalıp) ağırlıklı bir puan kaybı atayarak yukarıdaki basit
+// "var/yok" listesini 0-100 arası tek bir skora çevirir. Kesin bir spam filtresi
+// DEĞİLDİR (Gmail/Outlook'un gerçek algoritmasını bilemeyiz), sadece yaygın
+// bilinen kötü kalıpları gösterip göndermeden önce gözden geçirmeyi kolaylaştırır.
+function computeQualityScore(subject, body) {
+  const issues = checkSpamTriggers(subject, body);
+  let score = 100;
+  for (const issue of issues) {
+    if (/çok fazla ünlem/.test(issue)) score -= 10;
+    else if (/büyük harf/.test(issue)) score -= 10;
+    else if (/çok fazla link/.test(issue)) score -= 15;
+    else if (/link kısaltıcı/.test(issue)) score -= 15;
+    else score -= 8; // yasaklı kelime/kalıp eşleşmesi
+  }
+  const plainSubject = (subject || "").trim();
+  const plainBody = (body || "").trim();
+  if (!plainSubject) {
+    score -= 20;
+    issues.push("konu satırı boş");
+  } else if (plainSubject.length > 78) {
+    score -= 5;
+    issues.push("konu satırı çok uzun (78 karakterden fazla — bazı istemcilerde kesilir)");
+  }
+  if (plainBody.length < 50) {
+    score -= 15;
+    issues.push("mail içeriği çok kısa (50 karakterden az) — düşük efor/otomasyon gibi algılanabilir");
+  }
+  if (!/{{\s*marka\s*}}/i.test(subject) && !/{{\s*marka\s*}}/i.test(body)) {
+    score -= 5;
+    issues.push("kişiselleştirme etiketi ({{marka}}) hiç kullanılmamış — kişiselleştirilmemiş mailler daha düşük yanıt oranına sahip olabilir");
+  }
+  score = Math.max(0, Math.min(100, score));
+  const grade = score >= 80 ? "iyi" : score >= 55 ? "orta" : "düşük";
+  return { score, grade, issues };
+}
+
+function renderQualityScoreBadge() {
+  const el = document.getElementById("qualityScoreBadge");
+  if (!el) return;
+  const subject = subjectInput.value;
+  const body = richTextToPlain(bodyInput.innerHTML);
+  if (!subject.trim() && !body.trim()) {
+    el.style.display = "none";
+    return;
+  }
+  const { score, grade, issues } = computeQualityScore(subject, body);
+  el.style.display = "block";
+  el.className = `quality-score-badge quality-${grade}`;
+  el.title = issues.length > 0 ? issues.join(" • ") : "Herhangi bir sorun tespit edilmedi.";
+  el.textContent = `Kalite Skoru: ${score}/100 (${grade === "iyi" ? "İyi" : grade === "orta" ? "Orta" : "Düşük"})${
+    issues.length > 0 ? ` — ${issues.length} uyarı (üzerine gel)` : ""
+  }`;
+}
+if (typeof subjectInput !== "undefined" && subjectInput) {
+  subjectInput.addEventListener("input", renderQualityScoreBadge);
+}
+if (typeof bodyInput !== "undefined" && bodyInput) {
+  bodyInput.addEventListener("input", renderQualityScoreBadge);
+  bodyInput.addEventListener("blur", renderQualityScoreBadge);
+}
+renderQualityScoreBadge();
+
 document.getElementById("saveTemplateBtn").addEventListener("click", async () => {
-  const triggers = checkSpamTriggers(subjectInput.value, richTextToPlain(bodyInput.innerHTML));
+  const { score, issues: triggers } = computeQualityScore(subjectInput.value, richTextToPlain(bodyInput.innerHTML));
   if (triggers.length > 0) {
     const proceed = confirm(
-      `Şablonda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\nYine de kaydetmek istiyor musun?`
+      `Kalite Skoru: ${score}/100\n\nŞablonda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\nYine de kaydetmek istiyor musun?`
     );
     if (!proceed) return;
   }
@@ -980,10 +1352,10 @@ async function sendBatch(targets) {
   // bu yüzden sadece "Şablonu kaydet" anında değil, gönderim anında da uyarıyoruz.
   const rawSubject = subjectInput.value;
   const rawBody = bodyInput.innerHTML;
-  const triggers = checkSpamTriggers(rawSubject, richTextToPlain(rawBody));
+  const { score, issues: triggers } = computeQualityScore(rawSubject, richTextToPlain(rawBody));
   if (triggers.length > 0) {
     const proceed = confirm(
-      `Göndereceğin mail şablonunda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\n` +
+      `Kalite Skoru: ${score}/100\n\nGöndereceğin mail şablonunda spam filtrelerini tetikleyebilecek şu ifadeler var:\n\n- ${triggers.join("\n- ")}\n\n` +
         `Bunlar ${targets.length} markaya gidecek maillerin spam'e düşme riskini artırabilir. Yine de göndermek istiyor musun?`
     );
     if (!proceed) return;
@@ -1095,7 +1467,7 @@ document.getElementById("sendSelectedBtn").addEventListener("click", () => {
 selectAllCheckbox.addEventListener("change", () => {
   // Bir filtre sekmesi aktifse "tümünü seç" sadece o an görünen (filtrelenmiş)
   // markaları etkiler, gizli olanları değil.
-  const visible = brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b));
+  const visible = brands.filter((b) => matchesAllFilters(b));
   if (selectAllCheckbox.checked) {
     visible.forEach((b) => selectedIds.add(String(b.id)));
   } else {
@@ -1116,11 +1488,69 @@ document.querySelectorAll(".filter-tab").forEach((btn) => {
     currentPage = 1;
     if (currentFilter !== "all" && currentFilter !== "low_confidence") {
       selectedIds.clear();
-      brands.filter((b) => matchesFilter(b, currentFilter) && matchesCategory(b)).forEach((b) => selectedIds.add(String(b.id)));
+      brands.filter((b) => matchesAllFilters(b)).forEach((b) => selectedIds.add(String(b.id)));
     }
     renderBrands();
   });
 });
+
+// v50/v51: Arama kutusu ve gelişmiş filtreler — her değişiklikte sadece tabloyu
+// (renderBrands) yeniden çizer, seçimlere/sayfalamaya dokunmaz (arama yaparken
+// yanlışlıkla seçim kaybolmasın diye).
+const brandSearchInputEl = document.getElementById("brandSearchInput");
+if (brandSearchInputEl) {
+  brandSearchInputEl.addEventListener("input", () => {
+    searchQuery = brandSearchInputEl.value.trim().toLowerCase();
+    currentPage = 1;
+    renderBrands();
+  });
+}
+const filterConfidenceEl = document.getElementById("filterConfidence");
+if (filterConfidenceEl) {
+  filterConfidenceEl.addEventListener("change", () => {
+    advancedFilters.confidence = filterConfidenceEl.value;
+    currentPage = 1;
+    renderBrands();
+  });
+}
+const filterAiPriorityEl = document.getElementById("filterAiPriority");
+if (filterAiPriorityEl) {
+  filterAiPriorityEl.addEventListener("change", () => {
+    advancedFilters.aiPriority = filterAiPriorityEl.value;
+    currentPage = 1;
+    renderBrands();
+  });
+}
+const filterWholesaleEl = document.getElementById("filterWholesale");
+if (filterWholesaleEl) {
+  filterWholesaleEl.addEventListener("change", () => {
+    advancedFilters.hasWholesale = filterWholesaleEl.value === "yes";
+    currentPage = 1;
+    renderBrands();
+  });
+}
+const filterMinScoreEl = document.getElementById("filterMinScore");
+if (filterMinScoreEl) {
+  filterMinScoreEl.addEventListener("input", () => {
+    advancedFilters.minScore = filterMinScoreEl.value === "" ? "" : Number(filterMinScoreEl.value);
+    currentPage = 1;
+    renderBrands();
+  });
+}
+const clearAdvancedFiltersBtnEl = document.getElementById("clearAdvancedFiltersBtn");
+if (clearAdvancedFiltersBtnEl) {
+  clearAdvancedFiltersBtnEl.addEventListener("click", () => {
+    searchQuery = "";
+    advancedFilters = { confidence: "", aiPriority: "", hasWholesale: false, minScore: "" };
+    if (brandSearchInputEl) brandSearchInputEl.value = "";
+    if (filterConfidenceEl) filterConfidenceEl.value = "";
+    if (filterAiPriorityEl) filterAiPriorityEl.value = "";
+    if (filterWholesaleEl) filterWholesaleEl.value = "";
+    if (filterMinScoreEl) filterMinScoreEl.value = "";
+    currentPage = 1;
+    renderBrands();
+  });
+}
 
 // Kullanıcı aynı Excel'i birden fazla kez yüklediyse (ya da eski bir sürümde
 // yüklediyse, çünkü tekrar önleme sonradan eklendi), sistemde aynı marka birden
@@ -1338,6 +1768,7 @@ loadSettings();
 loadBrands();
 loadCredits();
 loadSuppressionList();
+loadCrmStages();
 
 // Sayfa yenilenirse (arama devam ederken ya da duraklatılmışken), butonların ve
 // durumun doğru görünmesi için mevcut arama durumunu kontrol et.
@@ -1377,3 +1808,299 @@ loadSuppressionList();
     // sessizce geç, kritik değil
   }
 })();
+
+// ============================================================================
+// v46 Marka Detay Paneli: eski "Detay" butonunun (sadece arama adımlarını
+// alert() ile gösteren) yerini alan kapsamlı panel. Sekmeler: Arama Adımları,
+// Timeline (v53), Görevler (v46), Evraklar (v54), AI Analiz (v55/56/57),
+// Wholesale Form (v63). Her sekme AÇILDIĞINDA verisi taze çekilir (basit ve
+// güvenilir — karmaşık bir cache mekanizması gerektirmez, tek marka için veri
+// hacmi zaten küçüktür).
+// ============================================================================
+let currentPanelBrand = null;
+let documentTypesCache = null;
+
+function openBrandPanel(brand) {
+  currentPanelBrand = brand;
+  document.getElementById("brandPanelTitle").textContent = `${brand.name} — Marka Detayı`;
+  document.querySelectorAll(".brand-panel-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "trace"));
+  document.querySelectorAll(".brand-panel-section").forEach((s) => (s.style.display = "none"));
+  document.getElementById("brandPanelTrace").style.display = "block";
+  renderTraceTab(brand);
+  document.getElementById("brandPanelOverlay").style.display = "flex";
+}
+
+function closeBrandPanel() {
+  document.getElementById("brandPanelOverlay").style.display = "none";
+  currentPanelBrand = null;
+}
+
+document.getElementById("brandPanelCloseBtn").addEventListener("click", closeBrandPanel);
+document.getElementById("brandPanelOverlay").addEventListener("click", (e) => {
+  if (e.target.id === "brandPanelOverlay") closeBrandPanel();
+});
+
+document.querySelectorAll(".brand-panel-tab").forEach((tabBtn) => {
+  tabBtn.addEventListener("click", () => {
+    if (!currentPanelBrand) return;
+    document.querySelectorAll(".brand-panel-tab").forEach((t) => t.classList.toggle("active", t === tabBtn));
+    document.querySelectorAll(".brand-panel-section").forEach((s) => (s.style.display = "none"));
+    const tab = tabBtn.dataset.tab;
+    if (tab === "trace") {
+      document.getElementById("brandPanelTrace").style.display = "block";
+      renderTraceTab(currentPanelBrand);
+    } else if (tab === "timeline") {
+      document.getElementById("brandPanelTimeline").style.display = "block";
+      loadTimelineTab(currentPanelBrand);
+    } else if (tab === "tasks") {
+      document.getElementById("brandPanelTasks").style.display = "block";
+      loadTasksTab(currentPanelBrand);
+    } else if (tab === "documents") {
+      document.getElementById("brandPanelDocuments").style.display = "block";
+      loadDocumentsTab(currentPanelBrand);
+    } else if (tab === "ai") {
+      document.getElementById("brandPanelAi").style.display = "block";
+      document.getElementById("aiResultBox").innerHTML = "";
+    } else if (tab === "wholesale") {
+      document.getElementById("brandPanelWholesale").style.display = "block";
+      renderWholesaleTab(currentPanelBrand);
+    }
+  });
+});
+
+function renderTraceTab(brand) {
+  const steps = (brand.last_error || "Henüz aranmadı.").split(" | ");
+  document.getElementById("brandPanelTrace").innerHTML =
+    `<ul style="margin:0; padding-left:18px;">${steps.map((s) => `<li>${s}</li>`).join("")}</ul>`;
+}
+
+async function loadTimelineTab(brand) {
+  const el = document.getElementById("brandPanelTimeline");
+  el.innerHTML = "Yükleniyor...";
+  try {
+    const res = await fetch(`/api/brands/${brand.id}/timeline`);
+    const data = await res.json();
+    if (!data.timeline || data.timeline.length === 0) {
+      el.innerHTML = `<p class="muted">Henüz bir olay kaydedilmemiş.</p>`;
+      return;
+    }
+    el.innerHTML = `<ul style="margin:0; padding-left:0; list-style:none;">${data.timeline
+      .map(
+        (ev) =>
+          `<li style="padding:8px 0; border-bottom:1px solid var(--border);">
+             <b>${ev.label}</b>${ev.at ? ` <span class="muted">— ${new Date(ev.at).toLocaleString("tr-TR")}</span>` : ""}
+             ${ev.detail ? `<div class="muted" style="margin-top:2px;">${String(ev.detail).slice(0, 200)}</div>` : ""}
+           </li>`
+      )
+      .join("")}</ul>`;
+  } catch (e) {
+    el.innerHTML = `<p class="muted">Yüklenirken hata oluştu.</p>`;
+  }
+}
+
+async function loadTasksTab(brand) {
+  const listEl = document.getElementById("taskList");
+  listEl.innerHTML = "Yükleniyor...";
+  try {
+    const res = await fetch(`/api/brands/${brand.id}/tasks`);
+    const data = await res.json();
+    if (!data.tasks || data.tasks.length === 0) {
+      listEl.innerHTML = `<p class="muted">Henüz görev eklenmemiş.</p>`;
+      return;
+    }
+    listEl.innerHTML = data.tasks
+      .map(
+        (t) => `
+        <div class="today-item-row" style="justify-content:space-between;">
+          <label style="display:flex; gap:8px; align-items:flex-start; flex:1;">
+            <input type="checkbox" class="task-complete-checkbox" data-task-id="${t.id}" ${t.completed ? "checked" : ""} />
+            <span style="${t.completed ? "text-decoration:line-through; color:var(--text-muted);" : ""}">${t.title}${t.due_date ? ` <span class="muted">(${t.due_date})</span>` : ""}</span>
+          </label>
+          <button class="small secondary task-delete-btn" data-task-id="${t.id}" title="Görevi sil">🗑️</button>
+        </div>`
+      )
+      .join("");
+    listEl.querySelectorAll(".task-complete-checkbox").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        await fetch(`/api/tasks/${cb.dataset.taskId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completed: cb.checked }),
+        });
+        loadTasksTab(brand);
+      });
+    });
+    listEl.querySelectorAll(".task-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await fetch(`/api/tasks/${btn.dataset.taskId}`, { method: "DELETE" });
+        loadTasksTab(brand);
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = `<p class="muted">Yüklenirken hata oluştu.</p>`;
+  }
+}
+
+document.getElementById("addTaskBtn").addEventListener("click", async () => {
+  if (!currentPanelBrand) return;
+  const titleEl = document.getElementById("newTaskTitle");
+  const dueEl = document.getElementById("newTaskDueDate");
+  if (!titleEl.value.trim()) return alert("Görev başlığı boş olamaz.");
+  const res = await fetch(`/api/brands/${currentPanelBrand.id}/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: titleEl.value.trim(), due_date: dueEl.value || null }),
+  });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || "Görev eklenemedi.");
+  titleEl.value = "";
+  dueEl.value = "";
+  loadTasksTab(currentPanelBrand);
+});
+
+async function loadDocumentsTab(brand) {
+  const selectEl = document.getElementById("newDocType");
+  if (!documentTypesCache) {
+    try {
+      const res = await fetch("/api/documents/types");
+      const data = await res.json();
+      documentTypesCache = data.types || [];
+    } catch (e) {
+      documentTypesCache = ["Diğer"];
+    }
+    selectEl.innerHTML = documentTypesCache.map((t) => `<option value="${t}">${t}</option>`).join("");
+  }
+
+  const listEl = document.getElementById("documentList");
+  listEl.innerHTML = "Yükleniyor...";
+  try {
+    const res = await fetch(`/api/brands/${brand.id}/documents`);
+    const data = await res.json();
+    if (!data.documents || data.documents.length === 0) {
+      listEl.innerHTML = `<p class="muted">Henüz evrak yüklenmemiş.</p>`;
+      return;
+    }
+    listEl.innerHTML = data.documents
+      .map(
+        (d) => `
+        <div class="today-item-row" style="justify-content:space-between;">
+          <span>📎 <b>${d.doc_type}</b> — ${d.original_name}</span>
+          <span>
+            <a href="/api/documents/${d.id}/download" class="small secondary" style="text-decoration:none; padding:4px 8px; border-radius:4px;">İndir</a>
+            <button class="small secondary doc-delete-btn" data-doc-id="${d.id}" title="Sil">🗑️</button>
+          </span>
+        </div>`
+      )
+      .join("");
+    listEl.querySelectorAll(".doc-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Bu evrak silinsin mi?")) return;
+        await fetch(`/api/documents/${btn.dataset.docId}`, { method: "DELETE" });
+        loadDocumentsTab(brand);
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = `<p class="muted">Yüklenirken hata oluştu.</p>`;
+  }
+}
+
+document.getElementById("uploadDocBtn").addEventListener("click", async () => {
+  if (!currentPanelBrand) return;
+  const fileEl = document.getElementById("newDocFile");
+  const typeEl = document.getElementById("newDocType");
+  if (!fileEl.files || fileEl.files.length === 0) return alert("Önce bir dosya seç.");
+  const formData = new FormData();
+  formData.append("file", fileEl.files[0]);
+  formData.append("doc_type", typeEl.value);
+  const res = await fetch(`/api/brands/${currentPanelBrand.id}/documents`, { method: "POST", body: formData });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error || "Yükleme başarısız.");
+  fileEl.value = "";
+  loadDocumentsTab(currentPanelBrand);
+});
+
+// AI sekmesi: 3 buton, her biri /api/brands/ai-* uçlarını TEK marka (ids:[id])
+// için çağırır. Sonuç kutusunda gösterilir; kullanıcı isterse metni kopyalayıp
+// mail şablonuna kendisi ekler (otomatik hiçbir şeye yapıştırılmaz).
+async function callAiAction(url, brand, resultRenderer) {
+  const box = document.getElementById("aiResultBox");
+  box.innerHTML = "Çalışıyor...";
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [brand.id] }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      box.innerHTML = `<p class="warn">${data.error || "Hata oluştu."}</p>`;
+      return;
+    }
+    box.innerHTML = resultRenderer(data.results[0]);
+  } catch (e) {
+    box.innerHTML = `<p class="warn">İstek sırasında hata oluştu.</p>`;
+  }
+}
+
+document.getElementById("aiPersonalizeBtn").addEventListener("click", () => {
+  if (!currentPanelBrand) return;
+  callAiAction("/api/brands/ai-personalize", currentPanelBrand, (r) =>
+    r.error ? `<p class="warn">${r.error}</p>` : `<p><b>Kişiselleştirilmiş giriş:</b></p><p>${r.intro}</p>`
+  );
+});
+
+document.getElementById("aiPriorityBtn").addEventListener("click", () => {
+  if (!currentPanelBrand) return;
+  callAiAction("/api/brands/ai-priority", currentPanelBrand, (r) =>
+    r.error
+      ? `<p class="warn">${r.error}</p>`
+      : `<p><b>Öncelik:</b> ${r.priority} — <b>Etiketler:</b> ${(r.tags || []).join(", ") || "yok"}</p>`
+  );
+});
+
+document.getElementById("aiClassifyReplyBtn").addEventListener("click", () => {
+  if (!currentPanelBrand) return;
+  callAiAction("/api/brands/ai-classify-replies", currentPanelBrand, (r) =>
+    r.error
+      ? `<p class="warn">${r.error}</p>`
+      : `<p><b>Kategori:</b> ${r.category}</p><p><b>Taslak yanıt:</b></p><p>${r.draft_reply}</p>`
+  );
+});
+
+// Wholesale Form sekmesi (v63): opsiyonel Playwright entegrasyonu. Kurulu
+// değilse (varsayılan) net bir hata gösterilir, sistemin geri kalanı etkilenmez.
+function renderWholesaleTab(brand) {
+  const infoEl = document.getElementById("wholesaleInfoText");
+  const resultBox = document.getElementById("wholesaleResultBox");
+  resultBox.innerHTML = "";
+  if (brand.wholesale_page_url) {
+    infoEl.innerHTML = `Tespit edilen sayfa: <a href="${brand.wholesale_page_url}" target="_blank" rel="noopener">${brand.wholesale_page_url} ↗</a>`;
+  } else {
+    infoEl.textContent = "Bu marka için otomatik tespit edilmiş bir wholesale/distributor sayfası yok. Formu doldurmak istersen önce siteyi kontrol et.";
+  }
+}
+
+document.getElementById("fillWholesaleFormBtn").addEventListener("click", async () => {
+  if (!currentPanelBrand) return;
+  if (!currentPanelBrand.wholesale_page_url) {
+    return alert("Bu marka için bir wholesale sayfası tespit edilmemiş.");
+  }
+  const resultBox = document.getElementById("wholesaleResultBox");
+  resultBox.innerHTML = "Form dolduruluyor (bu biraz zaman alabilir)...";
+  try {
+    const res = await fetch(`/api/brands/${currentPanelBrand.id}/fill-wholesale-form`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      resultBox.innerHTML = `<p class="warn">${data.error}</p>`;
+      return;
+    }
+    resultBox.innerHTML = `
+      <p><b>${data.filledFields.length}</b> alan dolduruldu: ${data.filledFields.map((f) => f.field).join(", ") || "yok"}</p>
+      ${data.warning ? `<p class="warn">${data.warning}</p>` : ""}
+      <img src="data:image/png;base64,${data.screenshotBase64}" style="max-width:100%; border:1px solid var(--border); border-radius:8px; margin-top:8px;" />
+      <p class="muted" style="margin-top:8px;">Bu ekran görüntüsü sadece önizlemedir — formu göndermek için siteyi kendin açıp kontrol ederek göndermelisin.</p>
+    `;
+  } catch (e) {
+    resultBox.innerHTML = `<p class="warn">İstek sırasında hata oluştu.</p>`;
+  }
+});

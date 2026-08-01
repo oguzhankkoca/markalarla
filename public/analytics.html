@@ -49,6 +49,16 @@
           </div>
         </div>
 
+        <div class="toolbar" style="margin-bottom:16px;">
+          <a href="/api/reports/excel" class="secondary" style="text-decoration:none; padding:8px 14px; border-radius:6px; display:inline-block;">📊 Excel Raporu İndir</a>
+          <a href="/api/reports/pdf" class="secondary" style="text-decoration:none; padding:8px 14px; border-radius:6px; display:inline-block;">📄 PDF Raporu İndir</a>
+        </div>
+
+        <div class="card" id="todayPanelCard">
+          <h2>✅ Bugün Yapılacaklar</h2>
+          <div id="todayPanel" class="muted">Yükleniyor...</div>
+        </div>
+
         <div class="card">
           <h2>📈 Genel Durum</h2>
           <div class="stat-grid" id="mainStats"></div>
@@ -64,10 +74,37 @@
           <div class="stat-grid" id="dealStats"></div>
         </div>
 
+        <!-- v60: Gelişmiş analiz paneli (grafikler) -->
+        <div class="card">
+          <h2>📉 Son 30 Gün: Gönderim / Yanıt / Olumlu</h2>
+          <canvas id="timeseriesChart" height="90"></canvas>
+        </div>
+
+        <div class="card">
+          <h2>🧭 CRM Pipeline Hunisi</h2>
+          <canvas id="pipelineFunnelChart" height="110"></canvas>
+        </div>
+
+        <div class="card" id="abTestCard" style="display:none;">
+          <h2>🧪 A/B Test: Konu Satırı Performansı</h2>
+          <canvas id="abTestChart" height="100"></canvas>
+        </div>
+
+        <div class="card">
+          <h2>🛒 Amazon Analizi (portföy geneli)</h2>
+          <div class="stat-grid" id="amazonStats"></div>
+          <h3 style="margin-top:16px; font-size:14px;">En Değerli 10 Kategori (tahmini toplam aylık ciro)</h3>
+          <table class="simple-table" id="amazonCategoryTable">
+            <thead><tr><th>Kategori</th><th>Marka Sayısı</th><th>Toplam Tahmini Ciro</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
       </div>
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
   <script src="/js/analytics.js"></script>
   <script src="/js/navBadge.js"></script>
   <script src="/js/jobStatusToast.js"></script>

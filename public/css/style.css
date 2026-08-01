@@ -382,6 +382,7 @@ td input[type="checkbox"] { min-width: 0; width: auto; padding: 0; }
 }
 .filter-tab:hover { background: #e2e4ee; }
 .filter-tab.active { background: var(--primary-soft); color: var(--primary-dark); border-color: var(--primary); }
+.brand-panel-tab.active { background: var(--primary-soft); color: var(--primary-dark); border-color: var(--primary); }
 .filter-count {
   display: inline-block;
   margin-left: 4px;
@@ -443,6 +444,78 @@ details[open] > .category-tree-toggle::before { content: "▾ "; }
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Opportunity Score rozeti — isim hücresinde kategori etiketinin yanında,
+   markanın 0-100 fırsat puanını renk koduyla gösterir (yeşil=güçlü, sarı=orta,
+   gri=düşük). Hover'da (title) puanın nasıl oluştuğunun kırılımını gösterir. */
+.opportunity-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
+}
+.opportunity-badge.opportunity-high { background: #e3f7ea; color: #1a7d3f; }
+.opportunity-badge.opportunity-medium { background: #fff3d6; color: #8a6400; }
+.opportunity-badge.opportunity-low { background: #f1f1f4; color: var(--text-muted); }
+
+/* CRM Pipeline: marka satırındaki aşama seçici (durum rozetinin altında küçük
+   bir dropdown) ve ayarlar panelindeki aşama düzenleyici satırları. */
+.crm-stage-select {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  padding: 2px 4px;
+  max-width: 160px;
+}
+.pipeline-editor-row input.pipeline-label-input {
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+
+/* v52: Gönderim öncesi spam/kalite skoru rozeti (mail şablonu editörünün altında,
+   yazarken canlı güncellenir; üzerine gelince tespit edilen sorunları gösterir). */
+.quality-score-badge {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: help;
+  display: inline-block;
+}
+.quality-score-badge.quality-iyi { background: #e3f7ea; color: #1a7d3f; }
+.quality-score-badge.quality-orta { background: #fff3d6; color: #8a6400; }
+.quality-score-badge.quality-düşük { background: #fbe4e4; color: #a3242f; }
+
+/* v47: Dashboard "Bugün Yapılacaklar" paneli */
+.today-section-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin: 14px 0 6px;
+  color: var(--text-muted);
+}
+.today-section-title:first-child { margin-top: 0; }
+.today-item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  text-decoration: none;
+  color: inherit;
+}
+a.today-item-row:hover { background: #f5f5f8; }
+.today-item-icon { flex-shrink: 0; }
+.today-empty {
+  padding: 10px 4px;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
 /* ---------- Sağ üst gönderim/arama ilerleme kartı ---------- */

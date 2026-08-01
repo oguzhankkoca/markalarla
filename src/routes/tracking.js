@@ -4,8 +4,26 @@ const db = require("../db");
 const mailer = require("../services/mailer");
 const { checkRepliesForMany, checkBounces, testImapConnection } = require("../services/inboxChecker");
 const { isSuppressed, addToSuppressionList } = require("../services/suppression");
+const { getPipelineStages, advanceStage } = require("../services/crmPipeline");
+const { logEvent } = require("../services/events");
 
 const router = express.Router();
+
+// brands.js'deki aynı isimli yardımcının bir kopyası — CRM pipeline'ı SADECE
+// İLERİ taşır, asla geri almaz. İki dosyada da kullanıldığı için burada da
+// tutuluyor (döngüsel require'dan kaçınmak için ortak bir modüle çıkarılmadı,
+// mantığı zaten çok küçük).
+function advanceCrmStage(brandId, currentStage, targetKey) {
+  const settings = db.prepare("SELECT crm_pipeline_stages FROM settings WHERE id = 1").get();
+  const stages = getPipelineStages(settings);
+  const next = advanceStage(currentStage, targetKey, stages);
+  if (next !== currentStage) {
+    db.prepare("UPDATE brands SET crm_stage = ? WHERE id = ?").run(next, brandId);
+    const label = (stages.find((s) => s.key === next) || {}).label || next;
+    logEvent(brandId, "stage_changed", `Aşama: ${label}`);
+  }
+  return next;
+}
 
 // 3 aşamalı takip: gönderimden şu kadar gün sonra sırayla gönderilir
 const FOLLOW_UP_SCHEDULE = [
@@ -416,6 +434,15 @@ async function runFullCheck() {
         summary.repliesFound++;
         if (result.documentRequested) summary.documentsRequested++;
 
+        // CRM pipeline'ı otomatik ilerlet: olumlu yanıt geldiyse "Olumlu Yanıt"a,
+        // evrak istendiyse (daha ileri bir aşama olduğu için) "Evrak İstendi"ye.
+        if (result.sentiment === "positive") {
+          advanceCrmStage(brand.id, brand.crm_stage, "positive_reply");
+        }
+        if (result.documentRequested) {
+          advanceCrmStage(brand.id, brand.crm_stage, "documents_requested");
+        }
+
         // Alıcı açıkça "bir daha yazma" dediyse, bu e-postayı KALICI olarak
         // "bir daha yazma" listesine ekle — marka kaydı silinse/yeniden yüklense
         // bile bir daha ASLA bu adrese mail gitmez (bkz. services/suppression.js).
@@ -671,6 +698,32 @@ router.get("/api/tracking/export", (req, res) => {
   );
   res.setHeader("Content-Disposition", "attachment; filename=marka-takip.xlsx");
   res.send(buffer);
+});
+
+// v58: A/B test için mail açılma (open) takip pikseli. sendMail() otomatik/toplu
+// gönderimlere bu adresi gösteren 1x1'lik görünmez bir resim ekler (bkz.
+// services/mailer.js -> trackOpenBrandId). Alıcının mail istemcisi resimleri
+// otomatik indirirse bu uç nokta çağrılır ve "opened" bayrağı bir kez set edilir.
+// Resim hiç yüklenmese bile (birçok istemci resimleri engeller) sistemin geri
+// kalanı etkilenmez — bu sadece EK bir sinyal, zorunlu bir mekanizma değil.
+const TRANSPARENT_PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64"
+);
+router.get("/api/track/o/:brandId", (req, res) => {
+  const brandId = parseInt(req.params.brandId, 10);
+  if (brandId) {
+    try {
+      db.prepare(
+        "UPDATE brands SET opened = 1, opened_at = COALESCE(opened_at, CURRENT_TIMESTAMP) WHERE id = ?"
+      ).run(brandId);
+    } catch (e) {
+      // sessizce geç — takip pikseli asla hata döndürmemeli (mail istemcisinde kırık resim gösterir)
+    }
+  }
+  res.set("Content-Type", "image/png");
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+  res.send(TRANSPARENT_PNG_1X1);
 });
 
 module.exports = router;

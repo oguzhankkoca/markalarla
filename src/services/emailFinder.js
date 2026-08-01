@@ -1313,7 +1313,62 @@ async function findBrandEmail(brandName, providedWebsite, extra = {}) {
   };
 }
 
+// Wholesale/Distributor/Dealer/Become-a-Partner/Retailer sayfası otomatik
+// tespiti (v49). Ana sayfadaki tüm linkleri tarar, href'i ya da link metni bu
+// anahtar kelimelerden birini içeren İLK linki döner — genelde site navigasyonunda
+// ya da footer'da "Wholesale Inquiries", "Become a Dealer" gibi bir link olur.
+// Hiçbir şey bulunamazsa (çoğu site için beklenen durum) sessizce null döner,
+// e-mail arama akışını hiçbir şekilde etkilemez/yavaşlatmaz (best-effort).
+const WHOLESALE_KEYWORDS = [
+  "wholesale",
+  "distributor",
+  "become a dealer",
+  "become-a-dealer",
+  "dealer inquiries",
+  "become a partner",
+  "become-a-partner",
+  "partner with us",
+  "retailer",
+  "reseller",
+  "trade account",
+  "trade program",
+  "b2b",
+];
+
+async function detectWholesalePage(website) {
+  if (!website) return null;
+  let url = website;
+  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  try {
+    const { data, status } = await httpClient.get(url, { timeout: 8000 });
+    if (status >= 400 || typeof data !== "string") return null;
+    const $ = cheerio.load(data);
+    let found = null;
+    $("a[href]").each((_, el) => {
+      if (found) return;
+      const href = ($(el).attr("href") || "").toLowerCase();
+      const text = $(el).text().toLowerCase().trim();
+      const hit = WHOLESALE_KEYWORDS.find((kw) => href.includes(kw.replace(/ /g, "-")) || href.includes(kw) || text.includes(kw));
+      if (hit) {
+        try {
+          found = new URL($(el).attr("href"), url).href;
+        } catch (e) {
+          // href geçersiz bir URL parçasıysa (ör. "javascript:void(0)") atla
+        }
+      }
+    });
+    return found;
+  } catch (e) {
+    return null;
+  }
+}
+
 module.exports = { findBrandEmail };
 // Test setinin (tests/) MX kaydı sınıflandırma mantığını (true/false/null) doğrudan
 // çağırıp doğrulayabilmesi için dışa aktarıldı — findBrandEmail'in davranışını değiştirmez.
 module.exports.checkMxRecords = checkMxRecords;
+// AI kişiselleştirme (routes/aiFeatures.js) ve wholesale/distributor sayfa tespiti
+// (find-email akışı) AYNI sayfa taramasını (email adayları + form var mı + sayfa
+// metni) tekrar yazmak yerine burayı kullanıyor.
+module.exports.scrapePage = scrapePage;
+module.exports.detectWholesalePage = detectWholesalePage;

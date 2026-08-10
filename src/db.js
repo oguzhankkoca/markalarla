@@ -408,5 +408,153 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_brand_documents_brand_id ON brand_documents(brand_id);
 `);
 
+// ---------------------------------------------------------------------------
+// v68: BRAND INTELLIGENCE + GROWTH AUDIT MODULE
+// ---------------------------------------------------------------------------
+// ÖNEMLİ TASARIM KARARI: SmartScout'tan Excel ile gelen alanlar (brands tablosundaki
+// brand_score, est_monthly_revenue, avg_sellers, total_reviews vb.) bu modülün
+// KONUSU DEĞİL — onlar "source of truth" olarak aynen kalır, AI ile yeniden
+// tahmin edilmez/değiştirilmez. Bu tablo SADECE SmartScout'un sağlayamadığı,
+// markanın kendi web sitesi/public kaynaklarından araştırılan bilgileri tutar:
+// wholesale şartları, marketplace/Amazon izin politikası, distribütör bilgisi,
+// iletişim kişisi önceliklendirmesi, Amazon listing/görsel denetimi, ve bunların
+// üzerine kurulu skorlar (Brand Accessibility Score, Neofa Priority) ile outreach
+// stratejisi/sıradaki en iyi aksiyon önerisi.
+//
+// Çoğu alan tek tek kolon yerine JSON blob olarak saklanıyor (bu projede zaten
+// opportunity_score_breakdown, ai_tags, subject_variants gibi alanlarda kullanılan
+// aynı desen) — her JSON içindeki her bilgi noktası mümkün olduğunca
+// {value, source, confidence} şeklinde saklanır ki panelde "kaynağı göster"
+// butonu her zaman çalışsın ve kanıtsız hiçbir iddia sessizce "kesin bilgi"ymiş
+// gibi görünmesin. Bilgi bulunamazsa value: "UNKNOWN" (ya da görsel denetimde
+// "NOT_VERIFIED"/"IMAGE_AUDIT_UNAVAILABLE") yazılır — AI'dan hiçbir zaman tahmin
+// yürütmesi istenmez (bkz. src/services/brandIntelligence.js prompt'ları).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS brand_intelligence (
+    brand_id INTEGER PRIMARY KEY,
+
+    -- COMPANY: official website, founder, size, çeşitli iletişim kanalları, LinkedIn.
+    company_data TEXT,
+
+    -- WHOLESALE RESEARCH: wholesale/dealer/reseller/retailer program, başvuru/portal
+    -- linkleri, MOQ, opening/reorder minimum, payment/net terms, direct wholesale mi.
+    wholesale_data TEXT,
+
+    -- MARKETPLACE POLICY: amazon_allowed/prohibited, marketplace_restrictions, MAP
+    -- policy, reseller/dealer agreement vb. — her biri ALLOWED/UNCLEAR/PROHIBITED.
+    marketplace_policy TEXT,
+
+    -- DISTRIBUTOR RESEARCH: marka direct wholesale yapmıyorsa authorized U.S.
+    -- distributor adayları (kanıt yoksa "UNVERIFIED DISTRIBUTOR" olarak işaretlenir).
+    distributor_data TEXT,
+
+    -- CONTACT INTELLIGENCE: Hunter.io + site taramasından toplanan kişiler, unvan
+    -- önceliğine göre sıralanmış [{name,title,email,phone,confidence,source}].
+    contacts TEXT,
+
+    -- RED FLAG ENGINE: [{flag, source, note}] — ör. "Amazon prohibited", "Too many
+    -- sellers", "Very high MOQ" vb.
+    red_flags TEXT,
+
+    -- AMAZON LISTING AUDIT: title/bullet/description/A+/video/brand store/review
+    -- kalitesi — SADECE gerçekten kontrol edilebilenler dolu, kalanı UNKNOWN.
+    listing_audit TEXT,
+
+    -- VISUAL AI ANALYSIS: vision-capable Claude ile görsel erişilebildiyse analiz;
+    -- erişilemediyse available:false + "IMAGE AUDIT UNAVAILABLE".
+    image_audit TEXT,
+
+    -- BRAND NEEDS / GROWTH AUDIT çıktıları.
+    top_opportunities TEXT,       -- JSON dizi, en fazla 3 madde
+    value_proposition TEXT,       -- JSON dizi: "Neofa bu markaya ne sağlayabilir"
+
+    -- OUTREACH STRATEGY
+    pitch_angle TEXT,             -- WHOLESALE_PARTNERSHIP | AMAZON_GROWTH_PARTNER | ...
+    pitch_angle_reason TEXT,
+    outreach_strategy TEXT,
+    outreach_strategy_reason TEXT,
+    next_best_action TEXT,
+
+    -- SCORES: Brand Accessibility Score (SmartScout Opportunity'den TAMAMEN ayrı)
+    -- ve Neofa Priority (ikisinin birleşimi). breakdown JSON: her bileşenin puanı.
+    accessibility_score REAL,
+    accessibility_grade TEXT,        -- A+ | A | B | C | D
+    accessibility_breakdown TEXT,
+    neofa_priority REAL,
+
+    -- Panelin en üstünde gösterilen tek-cümlelik aksiyon rozeti.
+    action_badge TEXT,               -- CONTACT_NOW | RESEARCH_MORE | DISTRIBUTOR_ROUTE | DO_NOT_CONTACT
+
+    -- AMAZON AUTHORIZATION TRACKING (v28): bunlar AI'ın tahmin ettiği şeyler DEĞİL,
+    -- kullanıcının süreç ilerledikçe elle işaretlediği gerçek durum alanları. Wholesale
+    -- onayı almak otomatik olarak Amazon yetkilendirmesi anlamına gelmez, bu yüzden
+    -- kasıtlı olarak ayrı tutuluyor.
+    wholesale_approval_status TEXT DEFAULT 'not_applied', -- not_applied | applied | approved | rejected
+    loa_requested INTEGER DEFAULT 0,
+    loa_received INTEGER DEFAULT 0,
+    authorized_reseller_status TEXT DEFAULT 'unknown',    -- unknown | pending | confirmed
+    amazon_approval_status TEXT DEFAULT 'unknown',        -- unknown | pending | approved | denied
+    amazon_gating_status TEXT DEFAULT 'unknown',          -- unknown | not_gated | gated | ungated
+    first_po_recorded_flag INTEGER DEFAULT 0,             -- growth_metrics'e bir kez sayılsın diye
+
+    -- RESEARCH CACHE / STALENESS: aynı marka tekrar yüklenirse/araştırılırsa gereksiz
+    -- yere tekrar araştırma yapılmasın diye. Her research seviyesi kendi tarihini tutar.
+    research_status TEXT DEFAULT 'not_researched', -- not_researched | level2 | level3 | level4
+    research_version INTEGER DEFAULT 0,
+    researched_at TEXT,
+    last_level2_at TEXT,
+    last_level3_at TEXT,
+    last_level4_at TEXT,
+    research_error TEXT,
+
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// v69: research cache geçerlilik süresi (madde 24: "30-60 gün") artık sabit
+// değil, Ayarlar'dan değiştirilebilir (bkz. services/brandIntelligence.js getStaleDays()).
+ensureColumn("settings", "intel_stale_days", "INTEGER DEFAULT 45");
+
+// v69: Hunter.io'dan gelen HAM (isim/unvan dahil) kontak listesi — Contact
+// Intelligence (madde 16) unvan bazlı önceliklendirme yapabilsin diye saklanıyor.
+// Mevcut e-mail seçim mantığı (brands.email/email_source) BUNA dokunmadan aynen
+// çalışmaya devam ediyor; bu sadece ek/read-only bir bilgi kaynağı.
+ensureColumn("brands", "hunter_raw_contacts", "TEXT");
+
+// v71: AI Outreach Intelligence entegrasyonu — mevcut "AI Kişiselleştirme" (v55,
+// ai_personalized_intro) artık sadece kısa bir giriş paragrafı değil, PROBLEM ->
+// OPPORTUNITY -> NEOFA VALUE -> ANGLE -> EMAIL zincirinden (services/
+// outreachIntelligence.js) üretilen TAM bir taslak email GÖVDESİNİ tutuyor.
+// ai_personalized_intro kolonu KENDİSİ DEĞİŞMEDİ (geriye dönük uyumlu, hiçbir
+// mevcut okuyucu kırılmıyor) — sadece içine artık daha zengin bir metin yazılıyor.
+// Buradaki iki YENİ kolon: konu satırı (email'in artık bir de subject'i var) ve
+// şeffaflık/denetim için kullanılan angle+bulgu+checklist meta verisi (JSON).
+ensureColumn("brands", "ai_generated_subject", "TEXT");
+ensureColumn("brands", "ai_outreach_meta", "TEXT");
+
+db.exec(`CREATE INDEX IF NOT EXISTS idx_brand_intelligence_action_badge ON brand_intelligence(action_badge)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_brand_intelligence_research_status ON brand_intelligence(research_status)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_brand_intelligence_neofa_priority ON brand_intelligence(neofa_priority)`);
+
+// Basit analitik sayaçları (v68, madde 29): karmaşık bir ML/tahmin sistemi kurmak
+// yerine sadece talep edilen ham metrikleri saklıyoruz — wholesale başvuru ve
+// onay/first PO gibi olaylar CRM/Intelligence panelinden elle işaretlendiğinde
+// burada birikir (bkz. routes/brandIntelligence.js). Diğer sayaçlar (emails sent,
+// replies, positive replies) zaten brands tablosundan anlık hesaplanabiliyor,
+// burada sadece "elle işaretlenen" ve geriye dönük hesaplanamayan iki tanesi var.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS growth_metrics (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    wholesale_applications INTEGER DEFAULT 0,
+    approved_brands INTEGER DEFAULT 0,
+    first_orders INTEGER DEFAULT 0,
+    first_po_total_value REAL DEFAULT 0
+  )
+`);
+db.prepare(
+  "INSERT OR IGNORE INTO growth_metrics (id, wholesale_applications, approved_brands, first_orders, first_po_total_value) VALUES (1, 0, 0, 0, 0)"
+).run();
+
 module.exports = db;
 module.exports.dbFilePath = dbFilePath;

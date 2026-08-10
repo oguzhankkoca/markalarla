@@ -35,11 +35,21 @@ router.post("/api/settings", (req, res) => {
     warmupStartedAt = null;
   }
 
+  // v69: Brand Intelligence araştırma önbelleği geçerlilik süresi (madde 24:
+  // "30-60 gün"). Sadece 7-365 arası makul bir sayı gönderildiyse günceller;
+  // gönderilmediyse ya da geçersizse mevcut değeri (yoksa DB varsayılanı 45'i)
+  // korur — diğer ayarlar gibi kısmi güncellemeyi bozmaz.
+  const parsedStaleDays = Number(merged.intel_stale_days);
+  const intelStaleDays =
+    parsedStaleDays && parsedStaleDays >= 7 && parsedStaleDays <= 365
+      ? parsedStaleDays
+      : current.intel_stale_days || 45;
+
   db.prepare(
     `UPDATE settings SET name = ?, company = ?, offer_text = ?, signature = ?,
       main_subject = ?, main_body = ?, daily_send_limit = ?, company_address = ?,
       rewarm_enabled = ?, warmup_enabled = ?, warmup_start_limit = ?, warmup_increment = ?,
-      warmup_started_at = ?
+      warmup_started_at = ?, intel_stale_days = ?
      WHERE id = 1`
   ).run(
     merged.name || "",
@@ -54,7 +64,8 @@ router.post("/api/settings", (req, res) => {
     warmupEnabled,
     Number(merged.warmup_start_limit) || 10,
     Number(merged.warmup_increment) || 10,
-    warmupStartedAt
+    warmupStartedAt,
+    intelStaleDays
   );
   res.json({ ok: true });
 });

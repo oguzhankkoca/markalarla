@@ -18,6 +18,40 @@ const httpClient = axios.create({
   validateStatus: () => true,
 });
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// v69 QA fix: eskiden bir API timeout/geçici ağ hatası/429/5xx olduğunda tek
+// seferde pes edilip hata döndürülüyordu (crash etmiyordu ama gereksiz yere
+// "araştırılamadı" işaretleniyordu). Şimdi GEÇİCİ olduğu bilinen hata sınıfları
+// (ağ hatası/timeout, 429 rate limit, 500/502/503/504) için kısa bir bekleme
+// sonrası TEK bir yeniden deneme yapılıyor — kalıcı hatalarda (401/400 gibi,
+// tekrar denemenin bir anlamı olmayan durumlar) hemen pes ediliyor. Yine de
+// başarısız olursa öncekiyle AYNI şekilde net bir hata döndürülüyor — asla
+// sessizce bir sonuç UYDURULMUYOR.
+function isRetryableStatus(status) {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+async function postWithRetry(url, body, headers) {
+  let lastResult;
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    try {
+      const res = await httpClient.post(url, body, { headers });
+      if (res.status === 200) return { ok: true, res };
+      lastResult = { ok: false, error: `HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}` };
+      if (!isRetryableStatus(res.status)) return lastResult;
+    } catch (e) {
+      lastResult = { ok: false, error: e.message };
+      // axios ağ/timeout hatalarında response yok — bunlar her zaman geçici kabul
+      // edilip yeniden denenir.
+    }
+    if (attempt === 0) await sleep(800);
+  }
+  return lastResult;
+}
+
 // Basit bir prompt gönderip metin yanıtı alır. Model JSON döndürmesi istenen
 // promptlarda bile bazen açıklama ekleyebilir; çağıran taraf yanıt içinden
 // { ... } bloğunu ayıklayarak parse eder.
@@ -29,30 +63,22 @@ const httpClient = axios.create({
 // olduğu için ek maliyet ihmal edilebilir düzeydedir.
 async function askClaude(prompt, { maxTokens = 250, model } = {}) {
   if (!isConfigured()) return null;
-  try {
-    const res = await httpClient.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: model || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
-        max_tokens: maxTokens,
-        messages: [{ role: "user", content: prompt }],
-      },
-      {
-        headers: {
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-      }
-    );
-    if (res.status !== 200) {
-      return { error: `Claude API HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}` };
+  const result = await postWithRetry(
+    "https://api.anthropic.com/v1/messages",
+    {
+      model: model || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+      max_tokens: maxTokens,
+      messages: [{ role: "user", content: prompt }],
+    },
+    {
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
     }
-    const text = res.data?.content?.[0]?.text || "";
-    return { text };
-  } catch (e) {
-    return { error: e.message };
-  }
+  );
+  if (!result.ok) return { error: `Claude API ${result.error}` };
+  const text = result.res.data?.content?.[0]?.text || "";
+  return { text };
 }
 
 // Model yanıtının içinden ilk { ... } JSON bloğunu güvenli şekilde çıkarır.
@@ -67,4 +93,37 @@ function extractJson(text) {
   }
 }
 
-module.exports = { isConfigured, askClaude, extractJson };
+// v68 Brand Intelligence — vision (görsel) analizi için askClaude'un kardeşi.
+// Claude'un multimodal mesaj formatını kullanır (content dizisinde hem image hem
+// text bloğu). Sadece VISUAL AI ANALYSIS (madde 11) için kullanılır; görsele
+// erişilemediğinde bu fonksiyon hiç çağrılmaz, çağıran taraf "IMAGE AUDIT
+// UNAVAILABLE" ile devam eder — burada bir hata olursa da aynı şekilde ele alınır.
+async function askClaudeVision(prompt, base64Image, mediaType = "image/jpeg", { maxTokens = 400, model } = {}) {
+  if (!isConfigured()) return null;
+  const result = await postWithRetry(
+    "https://api.anthropic.com/v1/messages",
+    {
+      model: model || process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
+      max_tokens: maxTokens,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
+    },
+    {
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    }
+  );
+  if (!result.ok) return { error: `Claude Vision API ${result.error}` };
+  const text = result.res.data?.content?.[0]?.text || "";
+  return { text };
+}
+
+module.exports = { isConfigured, askClaude, askClaudeVision, extractJson };

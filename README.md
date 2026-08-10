@@ -68,6 +68,256 @@ Eğer şu ana kadar disk eklemeden birden fazla güncelleme yaptıysan, önceki 
 muhtemelen siliniyor olabilir — disk ekledikten sonra Excel'ini tekrar yükleyip baştan
 başlayabilirsin, bundan sonrası kalıcı olacak.
 
+## AI Outreach Intelligence Entegrasyonu (v71)
+
+Mevcut Brand Intelligence araştırmasının (Wholesale Research, Marketplace Policy,
+Red Flag Engine, Amazon Listing Audit, Visual AI Analysis, Contact Intelligence)
+sonuçları artık AI Personalization/Email Generation sistemine BAĞLANDI. AI artık
+sadece "kişiselleştirilmiş bir email" yazmıyor — her marka için şu zinciri kuruyor:
+
+```
+MARKA PROBLEMİ -> BUSINESS OPPORTUNITY -> NEOFA'NIN GERÇEK DEĞERİ -> OUTREACH ANGLE -> PERSONALIZED EMAIL
+```
+
+**Yeni dosya: `src/services/outreachIntelligence.js`** — bu zinciri AI ÇAĞRISI
+YAPMADAN (ücretsiz, deterministik), zaten araştırılmış/doğrulanmış verilerden
+kurar. Hiçbir alan UNKNOWN/UNCLEAR ise bir bulgu/problem ÜRETMEZ. 5 angle'dan
+(Wholesale Partnership, Amazon Growth Opportunity, Listing/Content Opportunity,
+Controlled Reseller, Long-Term Retail Partnership) kanıta dayalı olanı/olanları
+önerir — email üretme adımındaki AI SADECE bu önerilen adaylar arasından seçim
+yapabilir, yeni bir angle uyduramaz.
+
+**`src/routes/aiFeatures.js` — `personalizeBrand()` yeniden yazıldı:**
+- Marka `DO_NOT_CONTACT` durumundaysa (marketplace politikası/red flag Amazon
+  satışını yasaklıyorsa) email HİÇ ÜRETİLMEZ, AI çağrısı bile yapılmaz.
+- Email artık 5 parçalı yapıda (gerçek bir iletişime geçme sebebi, TEK doğrulanmış
+  gözlem, fırsat, Neofa'nın sağlayabileceği şey, düşük sürtünmeli CTA) ve amacı
+  "hemen satış" değil "yanıt almak/wholesale konuşması başlatmak".
+- En fazla 1-2 doğrulanmış bulgu kullanılır (10 maddelik problem listesi YOK).
+- Mini-audit teklifi SADECE doğrulanmış güçlü bulgu + yüksek accessibility notu
+  varsa yapılır.
+- Amazon'dan bahsetme politikası marketplace policy'ye göre otomatik ayarlanır:
+  ALLOWED->açık konuşulabilir, UNCLEAR->wholesale/online-retail çerçevesi
+  (Amazon öne çıkarılmaz), PROHIBITED->zaten DO_NOT_CONTACT ile hiç email
+  üretilmez.
+- Neofa'nın SADECE gerçekten sunduğu yeteneklerden (Level 3 prompt'uyla AYNI,
+  tek kaynak liste) bahsedilir; garanti/abartılı büyüme vaadi YASAK.
+- **Deterministik guardrail** (`runEmailGuardrails`): AI'nın kendi öz-
+  değerlendirmesine güvenilmiyor — kod seviyesinde yasaklı ifade (guarantee,
+  dramatically increase, double your sales, doğrudan aşağılama vb.), >2 bulgu,
+  Amazon mention politikası ihlali, marka adı eksikliği, yanlış kontak ismi gibi
+  hard-fail kontrolleri yapılır. FAIL olursa 1 kez düzeltici prompt ile yeniden
+  denenir; yine FAIL olursa email SESSİZCE gönderilmez, açık bir hata döner.
+- Aynı `/api/brands/ai-personalize` uç noktası ve aynı `ai_personalized_intro`
+  kolonu kullanılıyor (geriye dönük UYUMLU) — mevcut gönderim/CRM/follow-up
+  akışları bu değişiklikten ETKİLENMEDİ (bu kolon zaten sadece manuel kopyala-
+  yapıştır amaçlıydı, otomatik gönderime hiç karışmıyordu).
+
+**Yeni: `GET /api/brands/:id/outreach-intelligence`** — AI çağrısı yapmayan,
+ücretsiz bir uç nokta; UI'da "AI OUTREACH INTELLIGENCE" panelini besler (Marka
+Detay -> AI sekmesi, mevcut email üretme butonunun ÜSTÜNDE): Primary Problem,
+Business Opportunity, Neofa Value, Recommended Angle, Recommended CTA.
+
+**`src/routes/tracking.js` — `buildFollowUpExtras()` güncellendi:** Day 15
+follow-up'ı artık ilk email'de kullanılan AYNI zincire (aynı doğrulanmış bulgu,
+aynı mini-audit uygunluk mantığı) referans veriyor — tutarsız bir iddia
+üretmiyor. Mevcut 7/15/30 günlük cadence, şablonlar ve fallback davranışı
+DEĞİŞMEDİ; hiçbir araştırma yapılmamış markalarda eskisi gibi jenerik kalıyor.
+
+**Test (API anahtarı olmadan mümkün olan her şey gerçek kodla test edildi):**
+44 otomatik test (12 mevcut regresyon test dosyası + 19 angle-seçimi testi + 15
+guardrail testi + 5 route/entegrasyon testi + follow-up entegrasyon testleri),
+hepsi PASS. Ayrıca önceki QA turunda araştırılan 9 gerçek markanın (Dr. Bronner's,
+Liquid I.V., Native, Blueland, Owala, Drizzle Honey, Scented Designs, Mud Pie,
+YETI) gerçek verileriyle zincir çıktıları doğrulandı: Liquid I.V. (Amazon
+PROHIBITED) doğru şekilde DO_NOT_CONTACT ile email üretimini tamamen engelledi;
+wholesale programı olan markalar doğru şekilde Wholesale Partnership angle'ına
+yönlendirildi; hiçbir marka için uydurma bir bulgu/angle üretilmedi. Gerçek bir
+ANTHROPIC_API_KEY ile canlı email üretimi test edilmedi (bu ortamda anahtar yok)
+— rol-yapma yöntemiyle (gerçek prompt kurallarına harfiyen uyularak elle yazılan
+örnek emailler) guardrail'den geçirildi, hepsi PASS etti.
+
+## Outreach Quality Test ve Halüsinasyon Guardrail Fix'i (v72)
+
+v71'in Brand Intelligence → Outreach Intelligence → AI Email zincirinin
+gerçekten kaliteli/güvenli email ürettiğini doğrulamak için ayrı bir "Outreach
+Quality Test" turu yapıldı: 22 marka (9 gerçek marka + açıkça "TestCo ..."
+etiketli 13 sentetik test fixture'ı, 4 angle kategorisinden 5'er örnek + bonus
+DO_NOT_CONTACT/distributor-route örneği) için `outreachIntelligence.js`'in
+GERÇEK kodu çalıştırıldı, `buildEmailPrompt`'un GERÇEK kurallarına harfiyen
+uyularak 21 email yazıldı, ve hepsi `runEmailGuardrails`'in GERÇEK kodundan
+geçirildi (hiçbiri elle "geçti" olarak işaretlenmedi).
+
+**Bulunan ve düzeltilen tek kritik açık:** Guardrail'in "no unsupported claim"
+kontrolü sadece dar bir overselling kelime listesine bakıyordu — 8 kategorilik
+bir halüsinasyon stres testinde (uydurma rakam, uydurma Amazon performansı,
+uydurma satış rakamı, chain'in önermediği bir "bulgu", NEOFA_CAPABILITIES dışı
+hizmet vaadi, mutlak "we always comply" güvencesi, uydurma "zaten yetkili
+satıcıyız" iddiası, uydurma "geçen görüşmemizde" referansı) **8 senaryonun 8'i
+de guardrail'den sızdı**. Yeni özellik eklenmedi — mevcut `runEmailGuardrails`
+fonksiyonu (`src/routes/aiFeatures.js`) genişletildi:
+
+- Uydurma rakam/yüzde tespiti (chain hiçbir zaman satış/performans rakamı
+  üretmez → metinde `$` tutarı ya da performansla ilişkili `%` görülmesi KESİN
+  uydurmadır)
+- `findings_used` artık SADECE SAYI değil, İÇERİK olarak da doğrulanıyor — AI,
+  chain'in önermediği bir "bulgu" yazıp bunu kullanırsa artık FAIL olur (en
+  kritik açık buydu)
+- Uydurma yetkilendirme/önceki temas/mutlak uyum güvencesi/kapsam dışı hizmet
+  vaadi için yeni banned-phrase kalıpları
+
+Fix sonrası: **8/8 halüsinasyon senaryosu doğru şekilde bloklanıyor**, 21
+meşru/gerçek email'in **hiçbirinde yanlış pozitif oluşmadı**, ve 12/12'lik tam
+regresyon paketi değişmeden geçmeye devam ediyor. CASE A/B testi (güçlü
+opportunity var vs. hiç sinyal yok) de doğrulandı: sinyal yokken AI uydurma bir
+problem üretmiyor, "Would you be open to a wholesale relationship?" tarzı basit
+bir fallback'e düşüyor. Detaylı, madde madde rapor (email quality score,
+best/worst 5 email, Amazon mention policy testi, follow-up 7/15/30 farklılık
+testi dahil) `V71_OUTREACH_QA_REPORT.md` dosyasında.
+
+## QA / Gerçek Dünya Test Turu ve Bug Fix'leri (v70)
+
+v69'un 33 maddelik özelliğin %100 tamamlandığı iddiasını doğrulamak için ayrı bir
+QA/test oturumu yapıldı: gerçek markalar (Dr. Bronner's, Liquid I.V., Native,
+Blueland, Owala, Drizzle Honey, Scented Designs Candle Co., Mud Pie, YETI) için
+gerçek web araştırması yapıldı, bu gerçek içerik brandIntelligence.js'teki GERÇEK
+prompt metnine elle uygulandı (AI rol-yapma, "kanıt yoksa UNKNOWN" kuralına
+harfiyen uyularak), ve sonuç JSON'lar brandAccessibilityScore.js/
+computeActionBadge/buildContactList'in GERÇEK, değiştirilmemiş kodundan geçirildi.
+Bu süreçte code review ile 6 gerçek bug bulundu ve düzeltildi (yeni özellik
+EKLENMEDİ, sadece mevcut kod düzeltildi):
+
+1. **Score reasoning yoktu** — Brand Accessibility Score'un 9 bileşeni sadece çıplak
+   sayı döndürüyordu, "neden bu puan" görünmüyordu. Artık her bileşen
+   `{score, reason}` döndürüyor (`brandAccessibilityScore.js`).
+2. **computeActionBadge'in DO_NOT_CONTACT regex'i kırıktı** — v69'un kendi Red Flag
+   Engine'i flag isimlerini `UPPERCASE_SNAKE_CASE` (örn. `AMAZON_PROHIBITED`) olarak
+   üretiyordu ama badge regex'i boşluklu metin bekliyordu, hiç eşleşmiyordu. Düzeltildi.
+3. **PHONE_FIRST rozeti hiç üretilmiyordu** — 5 rozetten biri (sadece telefon var,
+   e-mail yoksa) kodda hiç yoktu. Eklendi (mantık + UI).
+4. **Level 4, Level 2/3'ü zorunlu kılmıyordu** — kodun kendi yorumu "assumes level3
+   was done previously but doesn't enforce it" diyordu; bu tam olarak "seviyeler
+   doğru sırada mı çalışıyor" testinin yakalaması gereken bir hataydı. Düzeltildi
+   (Level 3'ün yaptığı gibi otomatik cascade eklendi).
+5. **Listing Audit "yok" ile "görülemedi"yi ayıramıyordu** — düz metin çıkarma
+   (cheerio) görsel/video/A+ Content gibi öğeleri hiç görmüyor, ama prompt bunu
+   AI'a açıklamıyordu. Artık prompt'a açık uyarı eklendi + UI'da `presenceLabel()`
+   ile "X bulunamadı" / "X doğrulanamadı" ayrımı net.
+6. **API timeout/429/5xx'te hiç retry yoktu** — tek seferde pes ediliyordu. 800ms
+   bekleme sonrası TEK bir yeniden deneme eklendi (sadece geçici hata sınıflarında).
+
+Bu QA turunda AYRICA doğrulandı (gerçek kod çalıştırılarak): research cache/staleness,
+Level 2→3→4 sırası, bulk research durdur/devam et, bir markadaki hatanın batch'in
+kalanını durdurmadığı, SmartScout verisinin (avg_sellers/dominant_seller/
+opportunity_score/est_monthly_revenue) brandIntelligence.js tarafından SADECE
+okunduğu (hiçbir zaman yazılmadığı — sadece `brand_intelligence` tablosuna yazılıyor),
+ve kontak listesinin (Hunter.io + şirket kanalları + founder) UNKNOWN alanları asla
+listeye eklemediği, 11 kademeli unvan sıralamasının doğru çalıştığı. Detaylı QA
+raporu ayrı bir dosyada teslim edildi (bkz. teslim edilen QA raporu).
+
+## Brand Intelligence — Tam Kapsamlı Genişletme (v69)
+
+v68'de kurulan Brand Intelligence mimarisi (şema, research pipeline, skorlama,
+UI) bu sürümde tüm alt sistemleriyle eksiksiz hale getirildi — hiçbir yeni
+sayfa/mimari değişikliği yok, sadece mevcut katmanların içi dolduruldu:
+
+- **Wholesale Research** artık MOQ, açılış/yeniden sipariş minimumu, ödeme
+  koşulları (Net 30 vb.), wholesale başvuru/portal URL'si, dealer/reseller/
+  retailer program bayraklarını da (bulunabildiğinde, kaynağıyla birlikte)
+  yakalıyor.
+- **Marketplace Policy** artık online/3. parti pazaryeri izinleri, MAP
+  politikası, reseller/dealer/marketplace anlaşmaları ve marketplace
+  kısıtlamalarını da kapsıyor — hepsi kanıtsızsa `UNKNOWN`.
+- **Red Flag Engine** artık iki kaynaktan besleniyor: (1) AI'ın sayfa
+  içeriğinden sistematik olarak kontrol ettiği isimli bir checklist (Amazon/
+  marketplace yasağı, münhasır distribütör, MAP riski, kapalı marka vb.), (2)
+  SmartScout'un KENDİ sayısal alanlarından (yeniden tahmin YOK) kural bazlı,
+  AI'sız türetilen flag'ler (çok fazla satıcı, Amazon Retail baskınlığı, çok
+  yüksek MOQ, wholesale programı yok, doğrulanamamış distribütör).
+- **Amazon Listing Audit** tam granüler hale geldi: title uzunluğu, bullet
+  point tamlığı, açıklama kalitesi, anahtar kelime optimizasyonu, varyasyon
+  varlığı, Brand Store KALİTESİ (sadece varlığı değil), yorum temaları, mobil
+  okunabilirlik — hepsi kanıt yoksa `UNKNOWN`.
+- **Visual AI Analysis** genişletildi: arka plan temizliği, ürün görünürlüğü,
+  ambalaj sunumu, görsel üzeri metin okunabilirliği, rekabete göre görsel
+  kalite. Sistem sadece TEK bir ana görsele erişebildiği için, "kaç görsel var/
+  lifestyle görseli var mı" gibi sorular açıkça "UNKNOWN (sadece ana görsel
+  erişilebilir)" olarak işaretleniyor — asla görmediği görseller hakkında
+  tahmin yürütmüyor.
+- **Contact Intelligence**: Hunter.io'nun döndürdüğü isim/unvan/departman
+  bilgisi artık yakalanıp `brands.hunter_raw_contacts`'a kaydediliyor ve Marka
+  Detay panelindeki kontak listesi tam olarak madde 16'daki 11 kademeli
+  önceliğe göre sıralanıyor: Wholesale Manager → Sales Manager → National
+  Accounts → E-commerce Manager → Marketplace Manager → Business Development →
+  Founder/Owner → Sales (kişi) → wholesale@ → sales@ → info@. Mevcut e-mail
+  bulma/seçim mantığına (`cleanEmails`, Hunter güven skoru sıralaması) hiç
+  dokunulmadı — bu sadece ek bir okuma katmanı.
+- **Toplu (kademeli) araştırma artık panelden tek tık uzakta**: Marka Listesi
+  sayfasına yeni bir "🧠 Brand Intelligence — Toplu Araştırma" kartı eklendi
+  (Level 2/3/4 seçimi, seçilenler ya da "en değerli N marka" için başlatma,
+  Durdur/Devam Et, ilerleme çubuğu). Tıpkı "Tüm markalar için email ara" gibi
+  sunucu tarafında arka planda çalışır — sayfa değiştirsen/tarayıcıyı kapatsan
+  bile iş durmaz.
+- **Araştırma önbelleği artık ayarlanabilir**: Ayarlar sayfasında yeni bir
+  "Brand Intelligence — Araştırma Önbelleği" kartı ile 30-60 gün aralığında
+  (varsayılan 45) STALE eşiği değiştirilebiliyor.
+
+**Mevcut sistemlere etkisi:** Sıfır. Tüm değişiklikler additive (yeni DB
+kolonları `ensureColumn` ile, yeni JSON alanları mevcut objelere spread ile
+eklendi) — email bulma, gönderim, follow-up cadence'i (7/14/30 gün), CRM
+Pipeline, Timeline, Görevler, Evraklar, warm-up, günlük limit, SPF/DKIM/DMARC,
+kara liste, wholesale form otomasyonu davranışları birebir aynı kaldı. Bunu
+doğrulamak için mevcut 12 otomatik test dosyası + yeni bir uçtan uca simülasyon
+(Level 2 → 3 → 4 zinciri, red flag birleştirme, kontak önceliklendirme) çalıştırıldı,
+hepsi geçti.
+
+## Brand Intelligence + Growth Audit (v68)
+
+SmartScout'tan gelen veriler ("Bu marka Amazon'da iyi bir fırsat mı?") hâlâ tek
+source-of-truth — hiçbir SmartScout kolonu AI ile yeniden tahmin edilmiyor. Bunun
+üzerine, "Bu marka Neofa ile çalışır mı, markaya nasıl yaklaşmalıyız?" sorusunu
+cevaplayan yepyeni bir araştırma katmanı eklendi. Marka Detay panelinde yeni bir
+**🧠 Brand Intelligence** sekmesi var:
+
+- **Company / Wholesale / Marketplace Policy / Distributor** araştırması —
+  markanın kendi web sitesi ve public kaynaklarından (arama motorları), her bulgu
+  kaynak linkiyle birlikte. Kanıt yoksa her zaman `UNKNOWN` yazar, asla tahmin
+  yürütmez (ör. Amazon izni kanıtsızsa "ALLOWED" değil "UNCLEAR" yazar).
+- **Brand Accessibility Score** (0-100, A+ ila D) — SmartScout Opportunity
+  Score'dan tamamen ayrı, 9 bileşenli (Wholesale, Marketplace İzni, Contactability,
+  Direct Brand, Distributor, Brand Fit, MOQ, Openness, Red Flag Risk) bir skor.
+  **Neofa Priority** ikisinin (SmartScout + Accessibility) ortalamasıdır.
+- **Red Flag Engine**, **Top 3 Growth Opportunity** (Amazon listing/görsel
+  denetimi dahil — erişilemeyen görseller için "IMAGE AUDIT UNAVAILABLE" yazar,
+  uydurmaz), **What Neofa Can Offer**, **Outreach Strategy** ve **Next Best
+  Action** önerileri.
+- Panelin en üstünde tek bakışta: 🟢 CONTACT NOW / 🟡 RESEARCH MORE / 🔵
+  DISTRIBUTOR ROUTE / 🔴 DO NOT CONTACT.
+- **Amazon Authorization Tracking**: Wholesale onayı, LOA, Authorized Reseller,
+  Amazon Approval/Gating — bunlar AI tahmini DEĞİL, senin elle işaretlediğin
+  gerçek durumlar (biri diğeri anlamına gelmez, kasıtlı olarak ayrı tutulur).
+
+**Kademeli araştırma (maliyet kontrolü):** Level 2 (hızlı tarama, ucuz) → Level 3
+(derin araştırma, sadece yüksek potansiyelli markalar) → Level 4 (Amazon listing/
+görsel denetimi, en pahalı seviye — sadece en yüksek potansiyellilerde). Marka
+Detay panelinden tek tek, ya da Marka Listesi sayfasındaki "🧠 Brand Intelligence
+— Toplu Araştırma" kartından (v69) toplu olarak tetiklenebilir. Aynı marka
+Ayarlar'dan belirlenen süreden (varsayılan 45, 30-60 gün aralığında ayarlanabilir,
+v69) daha yeni araştırıldıysa tekrar araştırılmaz (STALE olmadıkça) — gereksiz
+AI/arama maliyetinden kaçınmak için.
+
+**Mevcut sistemlere etkisi:** Excel/CSV yükleme, e-mail bulma, gönderim, follow-up
+(7/14/30 gün — cadence değişmedi), CRM Pipeline, Timeline, Görevler, Evraklar,
+warm-up, günlük limit, SPF/DKIM/DMARC, kara liste, wholesale form otomasyonu
+AYNEN çalışmaya devam ediyor. Sadece iki küçük ek: (1) AI kişiselleştirme artık
+varsa 1-2 doğrulanmış Brand Intelligence bulgusunu doğal şekilde kullanabiliyor,
+(2) 14. gün follow-up'ı artık (varsa) gerçek bir değer önerisi/mini-audit teklifi
+içerebiliyor — hiçbir bulgu yoksa mesaj eskisi gibi jenerik kalıyor.
+
+Dashboard'a yeni bir **🎯 Growth Metrics** kartı eklendi (gönderilen mail, yanıt,
+olumlu yanıt, wholesale başvurusu, onaylanan marka, ilk sipariş sayısı/toplam
+değeri) — karmaşık bir tahmin sistemi değil, sadece ham sayaçlar.
+
 ## Panel Sayfaları (v67)
 
 Eskiden "Marka Keşif" tek sayfada 8 farklı kartı (profil, DNS, kara liste, Excel

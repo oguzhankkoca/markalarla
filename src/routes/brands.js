@@ -13,6 +13,21 @@ const { findFuzzyDuplicateGroups } = require("../services/fuzzyDedup");
 const { pickVariant, safeParseArray } = require("../services/mailerHelpers");
 const formFiller = require("../services/formFiller");
 
+// v71 QA fix: Brand Intelligence (Level 2/3) bir markayı DO_NOT_CONTACT olarak
+// işaretlediyse (Amazon/marketplace politikası ya da kritik bir red flag satışı
+// açıkça yasaklıyorsa — bkz. brandIntelligence.js computeActionBadge), bu marka
+// için email ÜRETİMİ zaten engellenmişti (routes/aiFeatures.js personalizeBrand)
+// ama GÖNDERİM tarafında (tekli/toplu/otomatik) HİÇBİR kontrol yoktu — kullanıcı
+// panelden elle yazıp gönderirse ya da eski/jenerik bir şablonla otomatik
+// gönderim çalışırsa bu marka yine de mail alabiliyordu. Bu, "DO_NOT_CONTACT
+// için send = BLOCKED olmalı" testinin yakaladığı gerçek bir güvenlik açığıydı.
+// Yeni bir özellik DEĞİL — zaten var olan action_badge sisteminin gönderim
+// akışına da bağlanması (suppression/duplicate kontrolleriyle AYNI seviyede).
+function isDoNotContact(brandId) {
+  const row = db.prepare("SELECT action_badge FROM brand_intelligence WHERE brand_id = ?").get(brandId);
+  return !!(row && row.action_badge === "DO_NOT_CONTACT");
+}
+
 // find-email sonucu geldiğinde ya da yeni bir marka eklendiğinde Opportunity
 // Score'u yeniden hesaplayıp DB'ye yazar — panelde her zaman güncel kalsın diye.
 function recomputeAndSaveScore(brand) {
@@ -261,7 +276,17 @@ router.get("/api/brands", (req, res) => {
   const lastBatchRow = db
     .prepare("SELECT batch, batch_name, batch_uploaded_at FROM brands ORDER BY id DESC LIMIT 1")
     .get();
-  const brands = db.prepare("SELECT * FROM brands ORDER BY id").all();
+  // v71 QA fix: action_badge'i (DO_NOT_CONTACT dahil) LEFT JOIN ile birlikte
+  // çekiyoruz — böylece marka listesindeki "Gönder" butonu, her satır için ayrı
+  // bir istek atmadan, DO_NOT_CONTACT markalarda baştan pasif gösterilebiliyor
+  // (bkz. public/js/app.js satır ~683 send-btn disabled koşulu).
+  const brands = db
+    .prepare(
+      `SELECT brands.*, brand_intelligence.action_badge AS action_badge
+       FROM brands LEFT JOIN brand_intelligence ON brand_intelligence.brand_id = brands.id
+       ORDER BY brands.id`
+    )
+    .all();
   res.json({
     brands,
     batch: lastBatchRow ? lastBatchRow.batch : null,
@@ -463,7 +488,7 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
     if (note) traceLines.push(note);
     await checkAndNotifyQuotaExhaustion(traceLines);
     db.prepare(
-      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone)
+      `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone), hunter_raw_contacts = COALESCE(?, hunter_raw_contacts)
        WHERE id = ?`
     ).run(
       result.email,
@@ -475,6 +500,7 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
       result.contactUrl || null,
       crossBrandDuplicate,
       result.phone || null,
+      result.hunterRawContacts ? JSON.stringify(result.hunterRawContacts) : null,
       brand.id
     );
     const updated = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
@@ -523,7 +549,7 @@ async function processFindAllQueue() {
       if (note) traceLines.push(note);
       await checkAndNotifyQuotaExhaustion(traceLines);
       db.prepare(
-        `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone)
+        `UPDATE brands SET email = ?, website = COALESCE(?, website), email_source = ?, confidence = ?, status = ?, last_error = ?, contact_page_url = ?, bounced = 0, cross_brand_duplicate_email = ?, phone = COALESCE(?, phone), hunter_raw_contacts = COALESCE(?, hunter_raw_contacts)
          WHERE id = ?`
       ).run(
         result.email,
@@ -535,6 +561,7 @@ async function processFindAllQueue() {
         result.contactUrl || null,
         crossBrandDuplicate,
         result.phone || null,
+        result.hunterRawContacts ? JSON.stringify(result.hunterRawContacts) : null,
         brand.id
       );
       const updatedBrand = db.prepare("SELECT * FROM brands WHERE id = ?").get(brand.id);
@@ -675,6 +702,15 @@ router.post("/api/brands/:id/send", async (req, res) => {
   const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
   if (!brand.email) return res.status(400).json({ error: "Bu marka için e-mail adresi yok." });
+  // v71 QA fix: DO_NOT_CONTACT her şeyin önünde gelir (suppression listesinden
+  // bile önce) — Brand Intelligence bu markanın Amazon/marketplace'te satışının
+  // yasak olduğunu ya da kritik bir red flag taşıdığını tespit etti.
+  if (isDoNotContact(brand.id)) {
+    return res.status(409).json({
+      error:
+        "Bu marka DO_NOT_CONTACT durumunda — Brand Intelligence araştırması Amazon/marketplace satışının yasak olduğunu ya da kritik bir red flag bulunduğunu tespit etti. Gönderim engellendi (Marka Detay -> Brand Intelligence sekmesinden nedenini görebilirsin).",
+    });
+  }
   // Kalıcı "bir daha yazma" listesi her şeyin önünde gelir.
   if (isSuppressed(brand.email)) {
     return res.status(409).json({
@@ -806,12 +842,15 @@ async function runAutoSend() {
   // çünkü en değerli aday şu an markanın kendi ülkesinde gece yarısı olabilir; o
   // durumda sırasıyla bir sonraki en değerli, o an iş saatlerinde olan adaya geçiyoruz.
   // Ülke bilinmiyorsa aday zaten uygun sayılır (bkz. isLikelyBusinessHoursForCountry).
+  // v71 QA fix: DO_NOT_CONTACT markalar aday havuzuna hiç girmemeli — otomatik
+  // gönderim bunları asla seçmemeli (bkz. isDoNotContact yorumu).
   const candidatePool = db
     .prepare(
       `SELECT * FROM brands WHERE status = 'found' AND email IS NOT NULL
        AND (confidence IS NULL OR confidence != 'low')
        AND (cross_brand_duplicate_email IS NULL OR cross_brand_duplicate_email = 0)
        AND (suppressed IS NULL OR suppressed = 0)
+       AND id NOT IN (SELECT brand_id FROM brand_intelligence WHERE action_badge = 'DO_NOT_CONTACT')
        ORDER BY COALESCE(brand_score, 0) DESC, COALESCE(est_monthly_revenue, 0) DESC, id ASC
        LIMIT 25`
     )
@@ -908,8 +947,16 @@ async function processSendQueue() {
       continue;
     }
     // Tekli gönderim rotasındakiyle (POST /api/brands/:id/send) BİREBİR aynı
-    // korumalar — kalıcı "bir daha yazma" listesi ve çapraz marka tekrar koruması
-    // toplu gönderimde de atlanmaz.
+    // korumalar — kalıcı "bir daha yazma" listesi, DO_NOT_CONTACT ve çapraz
+    // marka tekrar koruması toplu gönderimde de atlanmaz.
+    if (isDoNotContact(brand.id)) {
+      sendJob.failedCount++;
+      db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'blocked', ?)").run(
+        brand.id,
+        "Toplu gönderimde atlandı: DO_NOT_CONTACT (Brand Intelligence Amazon/marketplace satışını yasaklıyor)."
+      );
+      continue;
+    }
     if (isSuppressed(brand.email)) {
       sendJob.failedCount++;
       continue;

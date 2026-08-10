@@ -672,6 +672,7 @@ function renderBrands() {
         <input data-field="email" data-id="${b.id}" value="${b.email || ""}" />
         ${b.email && b.confidence === "low" ? `<div class="confidence-warn">⚠️ düşük güven — bu site markaya ait olmayabilir, kontrol et</div>` : ""}
         ${b.suppressed ? `<div class="confidence-warn">🚫 kalıcı "bir daha yazma" listesinde — gönderim engellendi</div>` : ""}
+        ${b.action_badge === "DO_NOT_CONTACT" ? `<div class="confidence-warn">🔴 DO NOT CONTACT — Brand Intelligence Amazon/marketplace satışını yasakladı, gönderim engellendi (Marka Detay -> Brand Intelligence)</div>` : ""}
         ${b.phone ? `<div class="muted" style="font-size:12px;">📞 ${b.phone}</div>` : ""}
         ${contactLine}
         <input data-field="notes" data-id="${b.id}" value="${(b.notes || "").replace(/"/g, "&quot;")}" placeholder="Not ekle (ör. tekrar ara, fiyat bekliyor)" style="margin-top:4px; font-size:12px;" />
@@ -680,7 +681,7 @@ function renderBrands() {
       <td>
         <div class="actions-cell">
           <button class="small find-btn" data-id="${b.id}" title="E-mail ara">Ara</button>
-          <button class="small send-btn" data-id="${b.id}" title="Mail gönder" ${!b.email || b.status === "duplicate_blocked" || b.suppressed ? "disabled" : ""}>Gönder</button>
+          <button class="small send-btn" data-id="${b.id}" title="${b.action_badge === "DO_NOT_CONTACT" ? "DO NOT CONTACT — gönderim engellendi" : "Mail gönder"}" ${!b.email || b.status === "duplicate_blocked" || b.suppressed || b.action_badge === "DO_NOT_CONTACT" ? "disabled" : ""}>Gönder</button>
           ${
             !b.email && b.contact_page_url
               ? `<button class="small secondary contact-btn" data-id="${b.id}" title="İletişim formunu aç">Form Aç</button>
@@ -950,6 +951,10 @@ async function loadSettings() {
   document.getElementById("dailyLimitInput").value = s.daily_send_limit || 0;
   document.getElementById("rewarmEnabledCheckbox").checked = Boolean(s.rewarm_enabled);
 
+  // v69: Brand Intelligence araştırma önbelleği süresi (madde 24).
+  const intelStaleDaysInput = document.getElementById("intelStaleDaysInput");
+  if (intelStaleDaysInput) intelStaleDaysInput.value = s.intel_stale_days || 45;
+
   document.getElementById("warmupEnabledCheckbox").checked = Boolean(s.warmup_enabled);
   document.getElementById("warmupStartLimitInput").value = s.warmup_start_limit || 10;
   document.getElementById("warmupIncrementInput").value = s.warmup_increment || 10;
@@ -1100,6 +1105,131 @@ document.getElementById("resumeFindAllBtn").addEventListener("click", async () =
   updateFindAllButtons({ running: true, remaining: data.remaining });
   startFindAllPolling();
 });
+
+// v69: Brand Intelligence + Growth Audit — madde 23, toplu (kademeli) araştırma
+// UI'ı. "Tüm markalar için email ara" ile AYNI ruhta: sunucudaki research-bulk*
+// uç noktalarını (routes/brandIntelligence.js) 3 saniyede bir yoklar, sayfa
+// değişse/tarayıcı kapansa bile sunucu tarafında devam eder.
+let intelBulkPollInterval = null;
+
+function updateIntelBulkButtons(status) {
+  const selectedBtn = document.getElementById("intelBulkSelectedBtn");
+  const topNBtn = document.getElementById("intelBulkTopNBtn");
+  const stopBtn = document.getElementById("intelBulkStopBtn");
+  const resumeBtn = document.getElementById("intelBulkResumeBtn");
+  if (selectedBtn) selectedBtn.disabled = status.running;
+  if (topNBtn) topNBtn.disabled = status.running;
+  if (stopBtn) stopBtn.disabled = !status.running;
+  if (resumeBtn) resumeBtn.disabled = status.running || status.remaining === 0;
+}
+
+async function pollIntelBulkStatus() {
+  const res = await fetch("/api/brands/intel/research-bulk/status");
+  const status = await res.json();
+  updateIntelBulkButtons(status);
+  const statusEl = document.getElementById("intelBulkStatus");
+  const levelLabel = `Level ${status.level}`;
+  if (status.total > 0) {
+    updateProgressToast(status.processedCount, status.total, status.currentBrandName);
+  }
+  if (!status.running) {
+    clearInterval(intelBulkPollInterval);
+    intelBulkPollInterval = null;
+    if (statusEl) {
+      statusEl.textContent =
+        status.remaining > 0
+          ? `Duraklatıldı (${levelLabel}). ${status.remaining} marka kaldı — "Devam Et" ile devam edebilirsin.`
+          : status.total > 0
+          ? `Tamamlandı (${levelLabel}). ${status.processedCount}/${status.total} marka işlendi.${
+              status.errors && status.errors.length > 0 ? ` (${status.errors.length} hata — konsolu kontrol et)` : ""
+            }`
+          : "";
+    }
+    if (status.total > 0) {
+      finishProgressToast(status.processedCount);
+      loadBrands();
+    }
+  } else if (statusEl) {
+    statusEl.textContent = `Araştırılıyor (${levelLabel})... (${status.remaining} marka kaldı)`;
+  }
+}
+
+function startIntelBulkPolling() {
+  if (intelBulkPollInterval) clearInterval(intelBulkPollInterval);
+  intelBulkPollInterval = setInterval(pollIntelBulkStatus, 3000);
+}
+
+async function startIntelBulkResearch(body) {
+  const res = await fetch("/api/brands/intel/research-bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error || "Başlatılamadı.");
+    return;
+  }
+  const statusEl = document.getElementById("intelBulkStatus");
+  if (data.queued === 0) {
+    if (statusEl) {
+      statusEl.textContent = `Araştırılacak marka yok (${data.skippedFresh || 0} tanesi zaten güncel/STALE olmayan bir araştırmaya sahip — "Güncel olanları da tekrar araştır" ile zorlayabilirsin).`;
+    }
+    return;
+  }
+  if (statusEl) statusEl.textContent = `Kuyruğa alındı: ${data.queued} marka.`;
+  showProgressToast(`🧠 Brand Intelligence — Level ${body.level} (${data.queued})`);
+  updateIntelBulkButtons({ running: true, remaining: data.queued });
+  startIntelBulkPolling();
+}
+
+document.getElementById("intelBulkSelectedBtn").addEventListener("click", async () => {
+  if (selectedIds.size === 0) return alert("Önce en az bir marka seç.");
+  const level = Number(document.getElementById("intelBulkLevel").value) || 3;
+  const force = document.getElementById("intelBulkForce").checked;
+  await startIntelBulkResearch({ ids: Array.from(selectedIds), level, force });
+});
+
+document.getElementById("intelBulkTopNBtn").addEventListener("click", async () => {
+  const level = Number(document.getElementById("intelBulkLevel").value) || 3;
+  const force = document.getElementById("intelBulkForce").checked;
+  const limit = Number(document.getElementById("intelBulkTopN").value) || 20;
+  await startIntelBulkResearch({ level, force, limit });
+});
+
+document.getElementById("intelBulkStopBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/brands/intel/research-bulk/stop", { method: "POST" });
+  const data = await res.json();
+  const statusEl = document.getElementById("intelBulkStatus");
+  if (statusEl) statusEl.textContent = `Durduruluyor... (${data.remaining} marka kaldı)`;
+});
+
+document.getElementById("intelBulkResumeBtn").addEventListener("click", async () => {
+  const res = await fetch("/api/brands/intel/research-bulk/resume", { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) return alert(data.error);
+  const statusEl = document.getElementById("intelBulkStatus");
+  if (statusEl) statusEl.textContent = "Devam ediliyor...";
+  showProgressToast(`🧠 Brand Intelligence (${data.remaining} kaldı)`);
+  updateIntelBulkButtons({ running: true, remaining: data.remaining });
+  startIntelBulkPolling();
+});
+
+// Sayfa yüklendiğinde arka planda zaten çalışan bir intel araştırması varsa
+// (ör. sayfa yenilendi/tekrar açıldı) polling'i otomatik devam ettir.
+(async function resumeIntelBulkPollingIfRunning() {
+  try {
+    const res = await fetch("/api/brands/intel/research-bulk/status");
+    const status = await res.json();
+    updateIntelBulkButtons(status);
+    if (status.running) {
+      showProgressToast(`🧠 Brand Intelligence — Level ${status.level} (${status.total})`);
+      startIntelBulkPolling();
+    }
+  } catch (e) {
+    // sessizce geç
+  }
+})();
 
 // Basit spam-tetikleyici kelime kontrolü. Kesin bir spam filtresi değildir,
 // sadece Gmail/Outlook gibi filtrelerin sıkça tepki verdiği kalıpları
@@ -1282,6 +1412,27 @@ document.getElementById("saveDailyLimitBtn").addEventListener("click", async () 
       : "Kaydedildi. Otomatik günlük gönderim kapalı, sadece elle/seçerek göndereceksin."
   );
 });
+
+// v69: Brand Intelligence araştırma önbelleği süresi (madde 24) — Ayarlar'dan
+// değiştirilebilir (bkz. routes/settings.js POST /api/settings, services/
+// brandIntelligence.js getStaleDays()).
+const saveIntelStaleDaysBtn = document.getElementById("saveIntelStaleDaysBtn");
+if (saveIntelStaleDaysBtn) {
+  saveIntelStaleDaysBtn.addEventListener("click", async () => {
+    const raw = Number(document.getElementById("intelStaleDaysInput").value);
+    const statusEl = document.getElementById("intelStaleDaysStatus");
+    if (!raw || raw < 7 || raw > 365) {
+      if (statusEl) statusEl.textContent = "7-365 arası bir sayı gir.";
+      return;
+    }
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ intel_stale_days: raw }),
+    });
+    if (statusEl) statusEl.textContent = `Kaydedildi (${raw} gün).`;
+  });
+}
 
 // En değerli markalara (Brand Score / tahmini aylık ciro yüksek olanlara) önce
 // ulaşmak için: toplu gönderimde sıralama artık listeye eklenme sırası değil,
@@ -1823,6 +1974,18 @@ let documentTypesCache = null;
 function openBrandPanel(brand) {
   currentPanelBrand = brand;
   document.getElementById("brandPanelTitle").textContent = `${brand.name} — Marka Detayı`;
+  // v71 QA fix: DO_NOT_CONTACT durumu artık hangi sekmede olursan ol görünür —
+  // sadece AI/Intel sekmesine girince değil, panel açılır açılmaz üstte.
+  const existingBanner = document.getElementById("brandPanelDncBanner");
+  if (existingBanner) existingBanner.remove();
+  if (brand.action_badge === "DO_NOT_CONTACT") {
+    const banner = document.createElement("div");
+    banner.id = "brandPanelDncBanner";
+    banner.className = "warn";
+    banner.style.cssText = "margin:8px 16px; padding:10px; border-radius:6px; background:#fdecea; border:1px solid #f5c2c0;";
+    banner.innerHTML = `🔴 <b>DO NOT CONTACT</b> — Brand Intelligence bu markanın Amazon/marketplace'te satışının yasak olduğunu ya da kritik bir red flag taşıdığını tespit etti. Email üretimi ve gönderim (tekli/toplu/otomatik) engellendi. Detay için "Brand Intelligence" sekmesine bak.`;
+    document.getElementById("brandPanelTitle").insertAdjacentElement("afterend", banner);
+  }
   document.querySelectorAll(".brand-panel-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "trace"));
   document.querySelectorAll(".brand-panel-section").forEach((s) => (s.style.display = "none"));
   document.getElementById("brandPanelTrace").style.display = "block";
@@ -1849,6 +2012,9 @@ document.querySelectorAll(".brand-panel-tab").forEach((tabBtn) => {
     if (tab === "trace") {
       document.getElementById("brandPanelTrace").style.display = "block";
       renderTraceTab(currentPanelBrand);
+    } else if (tab === "intel") {
+      document.getElementById("brandPanelIntel").style.display = "block";
+      loadIntelTab(currentPanelBrand);
     } else if (tab === "timeline") {
       document.getElementById("brandPanelTimeline").style.display = "block";
       loadTimelineTab(currentPanelBrand);
@@ -1861,6 +2027,7 @@ document.querySelectorAll(".brand-panel-tab").forEach((tabBtn) => {
     } else if (tab === "ai") {
       document.getElementById("brandPanelAi").style.display = "block";
       document.getElementById("aiResultBox").innerHTML = "";
+      loadOutreachIntelBox(currentPanelBrand);
     } else if (tab === "wholesale") {
       document.getElementById("brandPanelWholesale").style.display = "block";
       renderWholesaleTab(currentPanelBrand);
@@ -1872,6 +2039,437 @@ function renderTraceTab(brand) {
   const steps = (brand.last_error || "Henüz aranmadı.").split(" | ");
   document.getElementById("brandPanelTrace").innerHTML =
     `<ul style="margin:0; padding-left:18px;">${steps.map((s) => `<li>${s}</li>`).join("")}</ul>`;
+}
+
+// ============================================================================
+// v68: BRAND INTELLIGENCE + GROWTH AUDIT sekmesi. Bkz. routes/brandIntelligence.js
+// ve services/brandIntelligence.js. Sadece burada, kullanıcı sekmeyi açtığında
+// veri çekilir/render edilir — mevcut hiçbir otomatik akışı etkilemez.
+// ============================================================================
+function escapeHtmlIntel(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// v69 QA fix: "PHONE_FIRST" (madde 30'daki 5 rozetten biri) eksikti —
+// computeActionBadge() bunu artık üretebiliyor (bkz. brandIntelligence.js),
+// ama burada bir karşılığı olmadığı için badgeMeta null'a düşüp rozet hiç
+// görünmüyordu. Eklendi.
+const ACTION_BADGE_META = {
+  CONTACT_NOW: { emoji: "🟢", label: "CONTACT NOW", cls: "found" },
+  RESEARCH_MORE: { emoji: "🟡", label: "RESEARCH MORE", cls: "pending" },
+  DISTRIBUTOR_ROUTE: { emoji: "🔵", label: "DISTRIBUTOR ROUTE", cls: "sent" },
+  PHONE_FIRST: { emoji: "📞", label: "PHONE FIRST", cls: "pending" },
+  DO_NOT_CONTACT: { emoji: "🔴", label: "DO NOT CONTACT", cls: "not_found" },
+};
+
+// v69 QA fix (Listing Audit precision): "NO" (gerçekten yok, kontrol edildi) ile
+// "UNKNOWN" (erişilemedi/doğrulanamadı) panelde AYNI görünmemeli — kullanıcı
+// testi tam olarak bunu istiyor: "No A+ Content found" (NO) vs "A+ Content
+// could not be verified" (UNKNOWN). YES/NO/UNKNOWN dışında bir metin gelirse
+// (AI'nın eski/serbest formatlı bir yanıtı ya da başka bir alan) olduğu gibi
+// gösterilir, hiçbir şey uydurulmaz.
+function presenceLabel(value, itemName) {
+  const v = String(value == null ? "" : value).toUpperCase();
+  if (v === "YES") return `✅ ${itemName} found`;
+  if (v === "NO") return `❌ No ${itemName} found`;
+  if (v === "UNKNOWN" || !v) return `<span class="muted">❓ ${itemName} could not be verified</span>`;
+  return escapeHtmlIntel(value); // beklenmedik bir değer geldiyse olduğu gibi göster
+}
+
+function intelField(obj, key, fallback) {
+  const f = obj && obj[key];
+  if (!f) return { value: fallback || "UNKNOWN", source: null };
+  if (typeof f === "object") {
+    return { value: f.value ?? f.status ?? fallback ?? "UNKNOWN", source: f.source || null, note: f.note || null };
+  }
+  return { value: f, source: null };
+}
+
+function renderFieldRow(label, field) {
+  const val = escapeHtmlIntel(field.value);
+  const isUnknown = String(field.value).toUpperCase() === "UNKNOWN";
+  const sourceHtml = field.source
+    ? ` <a href="${escapeHtmlIntel(field.source)}" target="_blank" rel="noopener" class="muted" style="font-size:11px;">[kaynak]</a>`
+    : "";
+  return `<div style="padding:4px 0; ${isUnknown ? "color:var(--text-muted);" : ""}"><b>${label}:</b> ${val}${sourceHtml}${
+    field.note ? `<div class="muted" style="font-size:12px;">${escapeHtmlIntel(field.note)}</div>` : ""
+  }</div>`;
+}
+
+async function loadIntelTab(brand) {
+  const el = document.getElementById("brandPanelIntel");
+  el.innerHTML = "Yükleniyor...";
+  let data;
+  try {
+    const res = await fetch(`/api/brands/${brand.id}/intel`);
+    data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Yüklenemedi.");
+  } catch (e) {
+    el.innerHTML = `<p class="muted">Yüklenirken hata oluştu: ${escapeHtmlIntel(e.message)}</p>`;
+    return;
+  }
+
+  const intel = data.intel;
+  const notResearched = !intel.research_status || intel.research_status === "not_researched";
+
+  if (!data.aiConfigured) {
+    el.innerHTML = `<p class="muted">Brand Intelligence araştırması için Ayarlar'da bir Anthropic API anahtarı gerekir (ANTHROPIC_API_KEY, console.anthropic.com). Tanımlanmadan bu sekme çalışmaz.</p>`;
+    return;
+  }
+
+  const badgeMeta = ACTION_BADGE_META[intel.action_badge] || null;
+  const opportunityScore = brand.opportunity_score != null ? Math.round(brand.opportunity_score) : null;
+
+  const researchButtons = `
+    <div class="toolbar" style="margin-bottom:14px;">
+      <button class="small secondary intel-research-btn" data-level="2">Level 2: Hızlı Tarama</button>
+      <button class="small secondary intel-research-btn" data-level="3">Level 3: Derin Araştırma</button>
+      <button class="small secondary intel-research-btn" data-level="4">Level 4: Growth Audit</button>
+      <span class="muted" id="intelResearchStatus"></span>
+    </div>`;
+
+  if (notResearched) {
+    el.innerHTML = `
+      ${researchButtons}
+      <p class="muted">Bu marka için henüz Brand Intelligence araştırması yapılmadı. Yukarıdan bir seviye seç
+      (Level 2 hızlı ve ucuz, Level 3 kapsamlı, Level 4 sadece yüksek potansiyelli markalarda önerilir).</p>`;
+    wireIntelResearchButtons(brand);
+    return;
+  }
+
+  const staleNote = data.stale
+    ? `<div class="badge pending" style="margin-bottom:10px;">⚠️ Bu araştırma 45+ gün önce yapılmış (STALE) — güncel olmayabilir, tekrar araştırabilirsin.</div>`
+    : "";
+
+  const topSummary = `
+    <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; padding:12px; background:var(--primary-soft, #edeafd); border-radius:10px;">
+      ${
+        badgeMeta
+          ? `<span class="badge ${badgeMeta.cls}" style="font-size:14px; padding:6px 12px;">${badgeMeta.emoji} ${badgeMeta.label}</span>`
+          : ""
+      }
+      <span><b>Neofa Priority:</b> ${intel.neofa_priority != null ? intel.neofa_priority + "/100" : "—"}</span>
+      <span class="muted">SmartScout Opportunity: ${opportunityScore != null ? opportunityScore + "/100" : "—"}</span>
+      <span class="muted">Brand Accessibility: ${
+        intel.accessibility_score != null ? `${Math.round(intel.accessibility_score)}/100 (${intel.accessibility_grade})` : "—"
+      }</span>
+    </div>
+    ${
+      intel.next_best_action
+        ? `<div style="margin-bottom:14px;"><b>Next Best Action:</b> ${escapeHtmlIntel(intel.next_best_action)}</div>`
+        : ""
+    }`;
+
+  const companyData = intel.companyData || {};
+  const wholesaleData = intel.wholesaleData || {};
+  const marketplacePolicy = intel.marketplacePolicy || {};
+  const distributorData = intel.distributorData || {};
+  const contacts = intel.contacts || [];
+  const redFlags = intel.redFlags || [];
+  const listingAudit = intel.listingAudit || {};
+  const imageAudit = intel.imageAudit || {};
+  const topOpportunities = intel.topOpportunities || [];
+  const valueProposition = intel.valueProposition || [];
+
+  const companySection = `
+    <details open><summary class="category-tree-toggle">🏢 Company</summary>
+      ${renderFieldRow("Resmi website", intelField(companyData, "official_website", brand.website))}
+      ${renderFieldRow("Şirket adı", intelField(companyData, "company_name"))}
+      ${renderFieldRow("Kurucu/Sahibi", intelField(companyData, "founder_owner"))}
+      ${renderFieldRow("Şirket büyüklüğü", intelField(companyData, "company_size"))}
+      ${renderFieldRow("LinkedIn", intelField(companyData, "linkedin"))}
+      ${renderFieldRow("Genel e-mail", intelField(companyData, "general_email"))}
+      ${renderFieldRow("Wholesale iletişim", intelField(companyData, "wholesale_contact"))}
+      ${renderFieldRow("Telefon", intelField(companyData, "phone"))}
+    </details>`;
+
+  // v69 QA fix: her bileşen artık {label, score, weight, pointsEarned, reason}
+  // taşıyor — kullanıcı hangi puanın NEDEN verildiğini görebilsin diye
+  // ("Wholesale Accessibility: 17/20 — Reason: ..." formatı).
+  const accessBreakdown = intel.accessibilityBreakdown;
+  const breakdownRows = accessBreakdown
+    ? Object.values(accessBreakdown.parts)
+        .map(
+          (p) =>
+            `<div style="padding:4px 0; border-bottom:1px solid #f0f0f0;">
+               <div style="display:flex; justify-content:space-between;"><b>${escapeHtmlIntel(p.label)}</b><span>${p.pointsEarned}/${p.weight}</span></div>
+               <div class="muted" style="font-size:12px;">${escapeHtmlIntel(p.reason)}</div>
+             </div>`
+        )
+        .join("")
+    : `<p class="muted">Henüz hesaplanmadı (Level 3 çalıştır).</p>`;
+
+  const wholesaleSection = `
+    <details><summary class="category-tree-toggle">📦 Wholesale Intelligence</summary>
+      ${renderFieldRow("Wholesale programı", intelField(wholesaleData, "wholesale_program"))}
+      ${renderFieldRow("Direct wholesale", intelField(wholesaleData, "direct_wholesale"))}
+      ${renderFieldRow("Distributor gereksinimi", intelField(wholesaleData, "distributor_requirement"))}
+      ${renderFieldRow("MOQ", intelField(wholesaleData, "moq"))}
+      ${renderFieldRow("Opening order minimum", intelField(wholesaleData, "opening_order_minimum"))}
+      ${renderFieldRow("Payment/Net terms", intelField(wholesaleData, "payment_terms"))}
+    </details>`;
+
+  const marketplaceSection = `
+    <details><summary class="category-tree-toggle">🛒 Marketplace Policy</summary>
+      ${renderFieldRow("Amazon izni", intelField(marketplacePolicy, "amazon_allowed"))}
+      ${renderFieldRow("MAP policy", intelField(marketplacePolicy, "map_policy"))}
+      ${renderFieldRow("Reseller policy", intelField(marketplacePolicy, "reseller_policy"))}
+    </details>`;
+
+  const distributorSection = `
+    <details><summary class="category-tree-toggle">🚚 Distributor</summary>
+      ${
+        distributorData.distributors && distributorData.distributors.length > 0
+          ? distributorData.distributors
+              .map(
+                (d) => `<div style="padding:6px 0; border-bottom:1px solid var(--border);">
+                  <b>${escapeHtmlIntel(d.name)}</b> ${d.verified ? "✅ verified" : "⚠️ UNVERIFIED DISTRIBUTOR"}<br/>
+                  <span class="muted">${escapeHtmlIntel(d.website || "")} — ${escapeHtmlIntel(d.evidence || "")}</span>
+                </div>`
+              )
+              .join("")
+          : `<p class="muted">Distribütör bulunamadı / direct wholesale yapıyor olabilir.</p>`
+      }
+    </details>`;
+
+  const contactSection = `
+    <details><summary class="category-tree-toggle">📇 Contact Intelligence (${contacts.length})</summary>
+      ${
+        contacts.length > 0
+          ? contacts
+              .map(
+                (c) => `<div style="padding:6px 0; border-bottom:1px solid var(--border);">
+                  <b>${escapeHtmlIntel(c.title || "")}</b> ${c.name ? `— ${escapeHtmlIntel(c.name)}` : ""}<br/>
+                  <span class="muted">${escapeHtmlIntel(c.email || c.phone || "")} · güven: ${escapeHtmlIntel(
+                  c.confidence || "?"
+                )} · kaynak: ${escapeHtmlIntel(c.source || "?")}</span>
+                </div>`
+              )
+              .join("")
+          : `<p class="muted">Henüz kontak listesi oluşturulmadı.</p>`
+      }
+    </details>`;
+
+  const redFlagsSection = `
+    <details ${redFlags.length > 0 ? "open" : ""}><summary class="category-tree-toggle">🚨 Red Flags (${redFlags.length})</summary>
+      ${
+        redFlags.length > 0
+          ? redFlags
+              .map(
+                (f) => `<div style="padding:4px 0;">🚨 <b>${escapeHtmlIntel(f.flag)}</b>${
+                  f.note ? ` — ${escapeHtmlIntel(f.note)}` : ""
+                }${f.source ? ` <a href="${escapeHtmlIntel(f.source)}" target="_blank" rel="noopener" class="muted" style="font-size:11px;">[kaynak]</a>` : ""}</div>`
+              )
+              .join("")
+          : `<p class="muted">Tespit edilen bir red flag yok.</p>`
+      }
+    </details>`;
+
+  const listingSection = `
+    <details><summary class="category-tree-toggle">📋 Amazon Listing Audit</summary>
+      ${
+        listingAudit.available
+          ? `
+        <div class="muted" style="padding:2px 0;">Title: ${escapeHtmlIntel(listingAudit.title_quality || "UNKNOWN")}${listingAudit.title_length_adequate ? ` (uzunluk yeterli: ${escapeHtmlIntel(listingAudit.title_length_adequate)})` : ""}</div>
+        <div class="muted" style="padding:2px 0;">Bullet Points: ${escapeHtmlIntel(listingAudit.bullet_points_quality || "UNKNOWN")}${listingAudit.bullet_points_count_mentioned ? ` (${escapeHtmlIntel(listingAudit.bullet_points_count_mentioned)} adet)` : ""}</div>
+        <div class="muted" style="padding:2px 0;">Açıklama: ${escapeHtmlIntel(listingAudit.description_quality || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Anahtar Kelime Optimizasyonu: ${escapeHtmlIntel(listingAudit.keywords_optimization || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Varyasyonlar (renk/boy): ${presenceLabel(listingAudit.variations_present, "Variations")}</div>
+        <div class="muted" style="padding:2px 0;">A+ Content: ${presenceLabel(listingAudit.a_plus_content_present, "A+ Content")}</div>
+        <div class="muted" style="padding:2px 0;">Video: ${presenceLabel(listingAudit.video_present, "Video")}</div>
+        <div class="muted" style="padding:2px 0;">Brand Store: ${presenceLabel(listingAudit.brand_store_present, "Brand Store")}${listingAudit.brand_store_quality ? ` — ${escapeHtmlIntel(listingAudit.brand_store_quality)}` : ""}</div>
+        <div class="muted" style="padding:2px 0;">Yorum/Puan: ${escapeHtmlIntel(listingAudit.review_count_mentioned || "UNKNOWN")} yorum, ${escapeHtmlIntel(listingAudit.rating_mentioned || "UNKNOWN")} puan</div>
+        ${
+          Array.isArray(listingAudit.review_themes) && listingAudit.review_themes.length > 0
+            ? `<div class="muted" style="padding:2px 0;">Yorum Temaları: ${listingAudit.review_themes.map(escapeHtmlIntel).join(", ")}</div>`
+            : ""
+        }
+        <div class="muted" style="padding:2px 0;">Mobil Okunabilirlik: ${escapeHtmlIntel(listingAudit.mobile_readability || "UNKNOWN")}</div>
+        ${
+          imageAudit.available
+            ? `
+        <div class="muted" style="padding:2px 0; margin-top:6px;"><b>🖼️ Görsel Analizi (ana görsel)</b></div>
+        <div class="muted" style="padding:2px 0;">Profesyonellik: ${escapeHtmlIntel(imageAudit.professional_quality || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Çözünürlük/Netlik: ${escapeHtmlIntel(imageAudit.resolution_clarity || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Arka Plan: ${escapeHtmlIntel(imageAudit.background_cleanliness || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Ürün Görünürlüğü: ${escapeHtmlIntel(imageAudit.product_visibility || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Ambalaj Sunumu: ${escapeHtmlIntel(imageAudit.packaging_presentation || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Görsel Üzeri Metin Okunabilirliği: ${escapeHtmlIntel(imageAudit.text_readability_on_image || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0;">Rekabete Göre Görsel Kalite: ${escapeHtmlIntel(imageAudit.competitive_visual_quality || "UNKNOWN")}</div>
+        <div class="muted" style="padding:2px 0; font-size:11px;">ℹ️ Sadece ana görsel değerlendirildi — toplam görsel sayısı/lifestyle görseli varlığı bilinmiyor.</div>`
+            : `<div class="muted" style="padding:2px 0;">IMAGE AUDIT UNAVAILABLE (görsele erişilemedi)</div>`
+        }`
+          : `<p class="muted">${
+              listingAudit.reason === "no_storefront_url"
+                ? "Bu markada Amazon storefront/ASIN linki yok."
+                : "Amazon sayfası erişilemedi/bot korumasına takıldı — Level 4 ile tekrar dene."
+            }</p>`
+      }
+    </details>`;
+
+  const opportunitiesSection = `
+    <details open><summary class="category-tree-toggle">🎯 Top Growth Opportunities</summary>
+      ${
+        topOpportunities.length > 0
+          ? `<ol style="margin:0; padding-left:18px;">${topOpportunities.map((o) => `<li>${escapeHtmlIntel(o)}</li>`).join("")}</ol>`
+          : `<p class="muted">Henüz belirlenmedi (Level 3/4 çalıştır).</p>`
+      }
+    </details>`;
+
+  const valuePropSection = `
+    <details><summary class="category-tree-toggle">💡 What Neofa Can Offer</summary>
+      ${
+        valueProposition.length > 0
+          ? `<ul style="margin:0; padding-left:18px;">${valueProposition.map((v) => `<li>${escapeHtmlIntel(v)}</li>`).join("")}</ul>`
+          : `<p class="muted">Henüz belirlenmedi.</p>`
+      }
+    </details>`;
+
+  const strategySection = `
+    <details open><summary class="category-tree-toggle">📈 Recommended Outreach Strategy</summary>
+      <div><b>Pitch Angle:</b> ${escapeHtmlIntel(intel.pitch_angle || "—")}</div>
+      ${intel.pitch_angle_reason ? `<div class="muted">${escapeHtmlIntel(intel.pitch_angle_reason)}</div>` : ""}
+      <div style="margin-top:8px;"><b>Strateji:</b> ${escapeHtmlIntel(intel.outreach_strategy || "—")}</div>
+      ${intel.outreach_strategy_reason ? `<div class="muted">${escapeHtmlIntel(intel.outreach_strategy_reason)}</div>` : ""}
+    </details>`;
+
+  const scoreBreakdownSection = `
+    <details><summary class="category-tree-toggle">🧮 Brand Accessibility Score — Neden bu puan?</summary>
+      ${breakdownRows}
+    </details>`;
+
+  const authTrackingSection = `
+    <details><summary class="category-tree-toggle">✅ Amazon Authorization Tracking</summary>
+      <p class="muted" style="margin-top:0;">Bunlar AI tahmini DEĞİL — süreç ilerledikçe elle güncellediğin gerçek durumlar. Wholesale onayı almak otomatik olarak Amazon yetkilendirmesi anlamına gelmez.</p>
+      <label class="muted">Wholesale Başvuru Durumu:
+        <select id="intelWholesaleApprovalStatus" style="margin-left:6px;">
+          <option value="not_applied">Başvurulmadı</option>
+          <option value="applied">Başvuruldu</option>
+          <option value="approved">Onaylandı</option>
+          <option value="rejected">Reddedildi</option>
+        </select>
+      </label>
+      <div style="margin-top:8px;">
+        <label class="muted"><input type="checkbox" id="intelLoaRequested" style="width:auto;" /> LOA istendi</label>
+        &nbsp;&nbsp;
+        <label class="muted"><input type="checkbox" id="intelLoaReceived" style="width:auto;" /> LOA alındı</label>
+      </div>
+      <label class="muted" style="display:block; margin-top:8px;">Authorized Reseller Durumu:
+        <select id="intelAuthorizedResellerStatus" style="margin-left:6px;">
+          <option value="unknown">Bilinmiyor</option>
+          <option value="pending">Beklemede</option>
+          <option value="confirmed">Doğrulandı</option>
+        </select>
+      </label>
+      <label class="muted" style="display:block; margin-top:8px;">Amazon Approval Durumu:
+        <select id="intelAmazonApprovalStatus" style="margin-left:6px;">
+          <option value="unknown">Bilinmiyor</option>
+          <option value="pending">Beklemede</option>
+          <option value="approved">Onaylandı</option>
+          <option value="denied">Reddedildi</option>
+        </select>
+      </label>
+      <label class="muted" style="display:block; margin-top:8px;">Amazon Gating Durumu:
+        <select id="intelAmazonGatingStatus" style="margin-left:6px;">
+          <option value="unknown">Bilinmiyor</option>
+          <option value="not_gated">Gated değil</option>
+          <option value="gated">Gated</option>
+          <option value="ungated">Ungated edildi</option>
+        </select>
+      </label>
+      <div style="margin-top:10px;">
+        <input type="number" id="intelFirstPoValue" placeholder="İlk PO değeri ($) — kaydedildiyse bir daha sayılmaz" style="max-width:240px;" />
+        <button id="intelSaveAuthBtn" class="small secondary" style="margin-left:6px;">Kaydet</button>
+        <span class="muted" id="intelAuthSaveStatus"></span>
+      </div>
+    </details>`;
+
+  el.innerHTML =
+    researchButtons +
+    staleNote +
+    topSummary +
+    companySection +
+    wholesaleSection +
+    marketplaceSection +
+    distributorSection +
+    contactSection +
+    redFlagsSection +
+    scoreBreakdownSection +
+    listingSection +
+    opportunitiesSection +
+    valuePropSection +
+    strategySection +
+    authTrackingSection;
+
+  // Manuel authorization tracking alanlarını mevcut değerlerle doldur.
+  const setSel = (id, val) => {
+    const elx = document.getElementById(id);
+    if (elx) elx.value = val || elx.value;
+  };
+  setSel("intelWholesaleApprovalStatus", intel.wholesale_approval_status);
+  setSel("intelAuthorizedResellerStatus", intel.authorized_reseller_status);
+  setSel("intelAmazonApprovalStatus", intel.amazon_approval_status);
+  setSel("intelAmazonGatingStatus", intel.amazon_gating_status);
+  const loaReqEl = document.getElementById("intelLoaRequested");
+  const loaRecEl = document.getElementById("intelLoaReceived");
+  if (loaReqEl) loaReqEl.checked = Boolean(intel.loa_requested);
+  if (loaRecEl) loaRecEl.checked = Boolean(intel.loa_received);
+
+  document.getElementById("intelSaveAuthBtn").addEventListener("click", async () => {
+    const statusEl = document.getElementById("intelAuthSaveStatus");
+    statusEl.textContent = "Kaydediliyor...";
+    const body = {
+      wholesale_approval_status: document.getElementById("intelWholesaleApprovalStatus").value,
+      loa_requested: document.getElementById("intelLoaRequested").checked ? 1 : 0,
+      loa_received: document.getElementById("intelLoaReceived").checked ? 1 : 0,
+      authorized_reseller_status: document.getElementById("intelAuthorizedResellerStatus").value,
+      amazon_approval_status: document.getElementById("intelAmazonApprovalStatus").value,
+      amazon_gating_status: document.getElementById("intelAmazonGatingStatus").value,
+    };
+    const poVal = Number(document.getElementById("intelFirstPoValue").value);
+    if (poVal > 0) body.first_po_value = poVal;
+    try {
+      const res = await fetch(`/api/brands/${brand.id}/intel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Kaydedilemedi.");
+      statusEl.textContent = "Kaydedildi ✓";
+    } catch (e) {
+      statusEl.textContent = "Hata: " + e.message;
+    }
+  });
+
+  wireIntelResearchButtons(brand);
+}
+
+function wireIntelResearchButtons(brand) {
+  document.querySelectorAll(".intel-research-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const statusEl = document.getElementById("intelResearchStatus");
+      document.querySelectorAll(".intel-research-btn").forEach((b) => (b.disabled = true));
+      if (statusEl) statusEl.textContent = "Araştırılıyor, biraz sürebilir...";
+      try {
+        const res = await fetch(`/api/brands/${brand.id}/intel/research`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ level: Number(btn.dataset.level) }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Araştırma başarısız.");
+        if (statusEl) statusEl.textContent = data.ok ? "Tamamlandı ✓" : `Tamamlanamadı: ${data.reason || ""}`;
+        loadIntelTab(brand);
+      } catch (e) {
+        if (statusEl) statusEl.textContent = "Hata: " + e.message;
+        document.querySelectorAll(".intel-research-btn").forEach((b) => (b.disabled = false));
+      }
+    });
+  });
 }
 
 async function loadTimelineTab(brand) {
@@ -2019,6 +2617,44 @@ document.getElementById("uploadDocBtn").addEventListener("click", async () => {
   loadDocumentsTab(currentPanelBrand);
 });
 
+// v71: AI OUTREACH INTELLIGENCE kutusu — AI ÇAĞRISI YAPMAZ (GET, ücretsiz),
+// AI sekmesi her açıldığında otomatik yüklenir. "Neden bu markaya yazıyoruz"
+// zincirini (Primary Problem / Business Opportunity / Neofa Value / Angle /
+// CTA) email üretilmeden önce gösterir — madde 14'ün istediği tam olarak budur.
+async function loadOutreachIntelBox(brand) {
+  const box = document.getElementById("outreachIntelBox");
+  if (!brand) return;
+  box.innerHTML = `<p class="muted">Yükleniyor...</p>`;
+  try {
+    const res = await fetch(`/api/brands/${brand.id}/outreach-intelligence`);
+    const data = await res.json();
+    if (!res.ok || !data.chain) {
+      box.innerHTML = `<p class="muted">Outreach Intelligence hesaplanamadı.</p>`;
+      return;
+    }
+    const c = data.chain;
+    if (c.doNotContact) {
+      box.innerHTML = `<p class="warn" style="margin:0;"><b>🚫 DO NOT CONTACT</b> — ${escapeHtmlIntel(c.doNotContactReason || "")}</p>`;
+      return;
+    }
+    const row = (label, value) =>
+      value ? `<div style="padding:3px 0;"><b>${label}:</b> ${escapeHtmlIntel(value)}</div>` : "";
+    box.innerHTML = `
+      <div style="font-weight:600; margin-bottom:4px;">🧭 AI OUTREACH INTELLIGENCE</div>
+      ${row("Primary Problem", c.primaryProblem ? c.primaryProblem.text : "Doğrulanmış spesifik bir sorun yok — ilişki odaklı yaklaşım")}
+      ${row("Business Opportunity", c.businessOpportunity ? c.businessOpportunity.text : null)}
+      ${row("Neofa Value", c.neofaValue ? c.neofaValue.text : null)}
+      ${row("Recommended Angle", c.primaryAngle + (c.secondaryAngle ? ` (ikincil: ${c.secondaryAngle})` : ""))}
+      ${row("Recommended CTA", c.cta)}
+      ${c.miniAuditEligible ? `<div class="muted" style="padding:3px 0;">💡 Mini audit teklifi için uygun.</div>` : ""}
+      ${c.amazonMentionPolicy === "AVOID" ? `<div class="warn" style="padding:3px 0;">⚠️ Amazon'dan bahsetme — marketplace politikası yasaklıyor.</div>` : ""}
+      ${c.amazonMentionPolicy === "SOFT" ? `<div class="muted" style="padding:3px 0;">ℹ️ Amazon izni doğrulanamadı — ilk emailde wholesale/online retail çerçevesi kullanılacak.</div>` : ""}
+    `;
+  } catch (e) {
+    box.innerHTML = `<p class="muted">Outreach Intelligence yüklenemedi.</p>`;
+  }
+}
+
 // AI sekmesi: 3 buton, her biri /api/brands/ai-* uçlarını TEK marka (ids:[id])
 // için çağırır. Sonuç kutusunda gösterilir; kullanıcı isterse metni kopyalayıp
 // mail şablonuna kendisi ekler (otomatik hiçbir şeye yapıştırılmaz).
@@ -2042,11 +2678,30 @@ async function callAiAction(url, brand, resultRenderer) {
   }
 }
 
+// v71: Buton artık sadece kısa bir "giriş" değil, PROBLEM->OPPORTUNITY->
+// NEOFA VALUE->ANGLE zincirinden üretilmiş TAM bir taslak email (subject+body)
+// döndürür. Deterministik guardrail sonucu (checklist) da şeffaflık için
+// gösteriliyor — madde 13'ün "email quality check" isteğinin UI karşılığı.
 document.getElementById("aiPersonalizeBtn").addEventListener("click", () => {
   if (!currentPanelBrand) return;
-  callAiAction("/api/brands/ai-personalize", currentPanelBrand, (r) =>
-    r.error ? `<p class="warn">${r.error}</p>` : `<p><b>Kişiselleştirilmiş giriş:</b></p><p>${r.intro}</p>`
-  );
+  callAiAction("/api/brands/ai-personalize", currentPanelBrand, (r) => {
+    if (r.error) return `<p class="warn">${escapeHtmlIntel(r.error)}</p>`;
+    const meta = r.meta || {};
+    const checklist = meta.guardrailChecklist || {};
+    const checklistRows = Object.entries(checklist)
+      .map(([k, v]) => `<span style="display:inline-block; margin:2px 6px 2px 0; font-size:12px;">${v ? "✅" : "❌"} ${escapeHtmlIntel(k)}</span>`)
+      .join("");
+    return `
+      <p><b>Subject:</b> ${escapeHtmlIntel(r.subject || "")}</p>
+      <p style="white-space:pre-wrap; border:1px solid #eee; border-radius:6px; padding:10px; background:#fff;">${escapeHtmlIntel(r.body || r.intro || "")}</p>
+      <details style="margin-top:6px;">
+        <summary class="category-tree-toggle">Email Quality Check (guardrail sonucu)</summary>
+        <div style="margin-top:6px;">${checklistRows || "—"}</div>
+        <div class="muted" style="margin-top:6px; font-size:12px;">Angle: ${escapeHtmlIntel(meta.angleUsed || "—")} · Kullanılan bulgu sayısı: ${(meta.findingsUsed || []).length} · Deneme: ${meta.attempt || 1}</div>
+      </details>
+      <p class="muted" style="font-size:12px; margin-top:6px;">Bu bir TASLAK'tır — göndermeden önce oku ve gerekirse düzenle. Otomatik gönderime karışmaz.</p>
+    `;
+  });
 });
 
 document.getElementById("aiPriorityBtn").addEventListener("click", () => {

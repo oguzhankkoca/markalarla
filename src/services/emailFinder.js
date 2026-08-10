@@ -229,6 +229,13 @@ function cleanEmails(rawEmails, domain) {
       generic: GENERIC_LOCAL_PARTS.includes(email.split("@")[0]),
       hunterConfidence,
       phone,
+      // v69: Hunter.io'dan gelmiş olabilecek isim/unvan bilgisi — sıralama
+      // skoruna (score()) hiç girmiyor, sadece çağıran tarafın (findBrandEmail)
+      // ihtiyaç halinde okuyabilmesi için taşınıyor.
+      position: isObj && raw.position ? raw.position : null,
+      firstName: isObj && raw.firstName ? raw.firstName : null,
+      lastName: isObj && raw.lastName ? raw.lastName : null,
+      department: isObj && raw.department ? raw.department : null,
     });
   }
   list.sort((a, b) => {
@@ -903,6 +910,16 @@ async function findEmailsViaHunter(domain, trace) {
       // (nadiren dolu oluyor, ama doluysa markayı doğrudan aramak için değerli
       // ekstra bir kanal — panelde gösteriyoruz, başka bir işlem yapmıyoruz).
       phone: e.phone_number || null,
+      // v69: Brand Intelligence — Contact Intelligence (madde 16) unvan bazlı
+      // önceliklendirme yapabilsin diye Hunter'ın döndürdüğü isim/unvan/departman
+      // bilgisi de ek olarak yakalanıyor. SADECE yeni bir alan — mevcut email
+      // seçim/sıralama mantığını (cleanEmails/blendConfidence) hiçbir şekilde
+      // değiştirmiyor, sadece brands.hunter_raw_contacts'a kaydedilip Brand
+      // Intelligence tarafından okunuyor.
+      position: e.position || null,
+      firstName: e.first_name || null,
+      lastName: e.last_name || null,
+      department: e.department || null,
     }));
     const confidences = emails.map((e) => e.confidence).filter((c) => c !== null);
     trace.push(
@@ -1269,6 +1286,12 @@ async function findBrandEmail(brandName, providedWebsite, extra = {}) {
         confidence: applyMxPenalty(blendConfidence(domainConfidence, cleaned[0].sameDomain, cleaned[0].hunterConfidence)),
         contactUrl: null,
         phone: cleaned[0].phone || null,
+        // v69: Hunter.io'nun döndürdüğü TÜM kişi listesi (isim/unvan/departman
+        // dahil) — sadece seçilen tek e-mail değil. Brand Intelligence'ın Contact
+        // Intelligence modülü (madde 16) unvan bazlı önceliklendirme yapabilsin
+        // diye brands.hunter_raw_contacts'a olduğu gibi kaydediliyor. Mevcut
+        // email/source/confidence seçim mantığını etkilemez.
+        hunterRawContacts: hunterEmails,
         trace,
       };
     }

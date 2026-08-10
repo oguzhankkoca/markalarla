@@ -62,11 +62,64 @@ function daysAgo(dateStr) {
   return Math.floor((now - then) / (1000 * 60 * 60 * 24));
 }
 
-function fillTemplate(text, brandName) {
-  return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
+// v68: {{marka}}'nın yanına, İSTEĞE BAĞLI iki yeni placeholder eklendi:
+// {{deger_onerisi}} ve {{mini_audit_teklifi}}. İkisi de opsiyoneldir — kullanıcının
+// KENDİ yazdığı şablonlarda (settings.followup*_body) bu placeholder'lar hiç
+// geçmiyorsa hiçbir şey değişmez (mevcut follow-up engine'i BOZULMAZ). Sadece
+// aşağıdaki YENİ varsayılan şablonlarda kullanılıyorlar, gerçek Brand
+// Intelligence bulgusu varsa doldurulur, yoksa sessizce boş string olur.
+function fillTemplate(text, brandName, extras) {
+  let out = (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
+  const ex = extras || {};
+  out = out.replace(/{{\s*deger_onerisi\s*}}/gi, ex.valueProp || "");
+  out = out.replace(/{{\s*mini_audit_teklifi\s*}}/gi, ex.miniAuditOffer || "");
+  // Placeholder boş kaldıysa etrafında kalan gereksiz boşluk satırlarını temizle.
+  return out.replace(/\n{3,}/g, "\n\n").trim() + (out.endsWith("\n") ? "\n" : "");
+}
+
+// Brand Intelligence araştırması (madde 18/19) yapılmış bir markadan, follow-up
+// mailine doğal şekilde eklenebilecek EN FAZLA 1 doğrulanmış değer önerisi ve
+// (sadece yüksek kaliteli/doğrulanmış fırsat varsa) bir mini-audit teklif cümlesi
+// üretir. Araştırma hiç yapılmadıysa ya da hiçbir şey bulunamadıysa ikisi de boş
+// string döner — şablon o zaman eskisi gibi jenerik kalır.
+//
+// v71: Artık ham intel.valueProposition/topOpportunities yerine, ilk email'de
+// KULLANILAN AYNI zinciri (services/outreachIntelligence.js) çağırıyoruz —
+// madde 16'nın "follow-up'larda ilk emailde kullanılan fırsatı gerektiğinde
+// devam ettir" isteği tam olarak budur: Day 15 mesajı, Day 1'de gönderilen
+// email'in dayandığı AYNI doğrulanmış bulguya ve AYNI mini-audit uygunluk
+// mantığına (findings + accessibility grade) referans verir, tutarsız/farklı
+// bir iddia ÜRETMEZ. Eski davranışla (sadece intel.valueProposition[0]) aynı
+// FALLBACK'e sahip: brand_intelligence hiç araştırılmadıysa ya da chain boşsa
+// yine sessizce boş string döner, şablon jenerik kalır — HİÇBİR ŞEY BOZULMAZ.
+function buildFollowUpExtras(brandId) {
+  try {
+    const { getParsedIntel } = require("../services/brandIntelligence");
+    const db = require("../db");
+    const { buildOutreachIntelligence } = require("../services/outreachIntelligence");
+    const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(brandId);
+    const intel = getParsedIntel(brandId);
+    const chain = buildOutreachIntelligence(brand || {}, intel);
+
+    let valueProp = "";
+    if (!chain.doNotContact && chain.keyFindings && chain.keyFindings.length > 0) {
+      valueProp = `We noticed ${chain.keyFindings[0].text}.`;
+    } else if (Array.isArray(intel.valueProposition) && intel.valueProposition.length > 0) {
+      // Geriye dönük uyumluluk: chain hiçbir şey üretmediyse (ör. Level 3 hiç
+      // çalışmadıysa) eski ham value_proposition alanına düş — eski davranış korunur.
+      valueProp = intel.valueProposition[0];
+    }
+
+    const miniAuditOffer = !chain.doNotContact && chain.miniAuditEligible ? chain.miniAuditOffer : "";
+
+    return { valueProp, miniAuditOffer };
+  } catch (e) {
+    return { valueProp: "", miniAuditOffer: "" };
+  }
 }
 
 function getFollowUpTemplate(settings, stage) {
+  // DAY 7 — kısa, nazik bir "dürtme" (madde 20: bump). Değişmedi.
   if (stage === 1) {
     return {
       subject: settings.followup_subject || `Re: {{marka}} ile iş birliği teklifi`,
@@ -75,19 +128,24 @@ function getFollowUpTemplate(settings, stage) {
         `Merhaba {{marka}} ekibi,\n\nGeçen hafta ilettiğim iş birliği teklifiyle ilgili görüşünüzü almak isterim. Uygun bir zamanda kısa bir görüşme ayarlayabilir miyiz?\n\n${settings.signature || ""}`,
     };
   }
+  // DAY 14/15 — değer odaklı (madde 20): varsa gerçek bir Brand Intelligence
+  // bulgusuna ({{deger_onerisi}}) ve isteğe bağlı mini-audit teklifine
+  // ({{mini_audit_teklifi}}) doğal şekilde yer verir; hiçbir bulgu yoksa bu
+  // placeholder'lar boş kalır ve mesaj jenerik ama yine de "value-oriented" durur.
   if (stage === 2) {
     return {
       subject: settings.followup2_subject || `{{marka}} - kısa bir hatırlatma`,
       body:
         settings.followup2_body ||
-        `Merhaba {{marka}} ekibi,\n\nDaha önce gönderdiğim teklifle ilgili bir güncelleme var mı diye kısaca sormak istedim. Uygun olduğunuzda görüşmekten memnuniyet duyarız.\n\n${settings.signature || ""}`,
+        `Merhaba {{marka}} ekibi,\n\nDaha önce gönderdiğim teklifle ilgili bir güncelleme var mı diye kısaca sormak istedim. {{deger_onerisi}}\n\n{{mini_audit_teklifi}}\n\nUygun olduğunuzda görüşmekten memnuniyet duyarız.\n\n${settings.signature || ""}`,
     };
   }
+  // DAY 30 — nazik kapanış (madde 20): "should I close the loop for now?" ruhu.
   return {
     subject: settings.followup3_subject || `{{marka}} - son bir kez yazıyorum`,
     body:
       settings.followup3_body ||
-      `Merhaba {{marka}} ekibi,\n\nBu konuda son kez yazıyorum; şu an için uygun değilse anlayışla karşılarım. İlerleyen bir dönemde tekrar değerlendirmek isterseniz kapımız her zaman açık.\n\n${settings.signature || ""}`,
+      `Merhaba {{marka}} ekibi,\n\nBu konuda son kez yazıyorum — şu an için uygun değilse tamamen anlayışla karşılarım, bu konuyu şimdilik kapatabilirim. İlerleyen bir dönemde tekrar değerlendirmek isterseniz kapımız her zaman açık.\n\n${settings.signature || ""}`,
   };
 }
 
@@ -508,11 +566,16 @@ async function runFullCheck() {
 
       if (nextStep) {
         const template = getFollowUpTemplate(settings, nextStep.stage);
+        // Sadece DAY 14/15 (value-oriented) aşamasında Brand Intelligence bulgusu
+        // aranır — DAY 7 kısa bir dürtme, DAY 30 nazik bir kapanış olduğu için
+        // oralarda bu placeholder'lar zaten şablonda yok (fillTemplate onları
+        // kullanmayan metinlerde hiçbir şeyi değiştirmez).
+        const extras = nextStep.stage === 2 ? buildFollowUpExtras(brand.id) : {};
         try {
           const followUpInfo = await mailer.sendMail({
             to: brand.email,
-            subject: fillTemplate(template.subject, brand.name),
-            body: fillTemplate(template.body, brand.name),
+            subject: fillTemplate(template.subject, brand.name, extras),
+            body: fillTemplate(template.body, brand.name, extras),
           });
           // Bug fix: follow-up mailinin Message-ID'sini de günceliyoruz — alıcı
           // en son gönderilen (follow-up) maile yanıt verirse, thread eşleştirmesi

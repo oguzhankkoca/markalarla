@@ -193,6 +193,43 @@
           </table>
           </div>
         </div>
+
+        <!-- v69: Brand Intelligence + Growth Audit — madde 23 (kademeli toplu işleme).
+             "Tüm markalar için email ara" ile AYNI ruhta: sunucu tarafında arka planda
+             çalışan, durdurulup devam ettirilebilen bir kuyruk (bkz. routes/brandIntelligence.js
+             research-bulk*). Level 2 (ucuz, tüm markalar) -> Level 3 (derin, yüksek potansiyelli) ->
+             Level 4 (Amazon listing/görsel denetimi, en yüksek potansiyelli) kademesi burada seçilir. -->
+        <div class="card card-wide">
+          <h2>🧠 Brand Intelligence — Toplu Araştırma</h2>
+          <p class="muted">
+            Seçtiğin seviyede AI araştırması başlatır (maliyeti kontrol altında tutmak için kademeli):
+            <b>Level 2</b> — hızlı tarama (website + wholesale sayfası + Amazon izni, ucuz, tüm markalar için uygun);
+            <b>Level 3</b> — derin araştırma (şirket/distribütör/kontak/red flag/skor/strateji, sadece yüksek potansiyelli markalarda önerilir);
+            <b>Level 4</b> — Amazon listing/görsel denetimi (en pahalı, sadece EN yüksek potansiyelli markalarda önerilir).
+          </p>
+          <div class="toolbar">
+            <select id="intelBulkLevel" title="Araştırma seviyesi">
+              <option value="2">Level 2 — Hızlı Tarama</option>
+              <option value="3" selected>Level 3 — Derin Araştırma</option>
+              <option value="4">Level 4 — Amazon Listing/Görsel Denetimi</option>
+            </select>
+            <button id="intelBulkSelectedBtn" class="secondary" title="İşaretlediğin markalar için Brand Intelligence araştırması yapar">Seçilenler İçin Araştır</button>
+            <label class="muted" style="display:flex; align-items:center; gap:4px;">
+              En değerli
+              <input type="number" id="intelBulkTopN" value="20" min="1" max="500" style="width:70px;" />
+              marka için (Opportunity Score sırasına göre)
+            </label>
+            <button id="intelBulkTopNBtn" class="secondary">Araştır</button>
+            <label class="muted" style="display:flex; align-items:center; gap:4px;" title="İşaretlenirse, güncel (STALE olmayan) araştırması olan markalar da tekrar araştırılır">
+              <input type="checkbox" id="intelBulkForce" style="width:auto;" /> Güncel olanları da tekrar araştır
+            </label>
+          </div>
+          <div class="toolbar">
+            <button id="intelBulkStopBtn" class="secondary" disabled>Durdur</button>
+            <button id="intelBulkResumeBtn" class="secondary" disabled>Devam Et</button>
+            <span class="muted" id="intelBulkStatus"></span>
+          </div>
+        </div>
         </section>
 
         <!-- ================= YENİ MARKA EKLE ================= -->
@@ -315,6 +352,19 @@
           </label>
         </div>
 
+        <!-- v69: Brand Intelligence + Growth Audit — madde 24 (araştırma önbelleği
+             30-60 gün arası ayarlanabilir olmalı). -->
+        <div class="card">
+          <h2>🧠 Brand Intelligence — Araştırma Önbelleği</h2>
+          <p class="muted">
+            Bir marka için Brand Intelligence araştırması ne kadar süre sonra "eskimiş" (STALE)
+            sayılsın ve panelde "Tekrar Araştır" önerisi çıksın? Önerilen aralık 30-60 gündür.
+          </p>
+          <input type="number" id="intelStaleDaysInput" min="7" max="365" placeholder="Örn: 45" style="max-width:160px;" />
+          <button id="saveIntelStaleDaysBtn" class="secondary">Kaydet</button>
+          <span class="muted" id="intelStaleDaysStatus" style="margin-left:8px;"></span>
+        </div>
+
         <div class="card">
           <h2>🚫 Kalıcı "Bir Daha Yazma" Listesi</h2>
           <p class="muted">Biri açıkça "unsubscribe" / "bir daha yazma" dediğinde otomatik eklenir; marka kaydı silinse/yeniden yüklense bile bu adrese bir daha ASLA mail gitmez. Buradan elle de ekleyip çıkarabilirsin.</p>
@@ -372,6 +422,7 @@
       <h2 id="brandPanelTitle">Marka Detayı</h2>
       <div class="toolbar" id="brandPanelTabs" style="margin-bottom:12px;">
         <button class="small secondary brand-panel-tab active" data-tab="trace">Arama Adımları</button>
+        <button class="small secondary brand-panel-tab" data-tab="intel">🧠 Brand Intelligence</button>
         <button class="small secondary brand-panel-tab" data-tab="timeline">🕒 Timeline</button>
         <button class="small secondary brand-panel-tab" data-tab="tasks">📌 Görevler</button>
         <button class="small secondary brand-panel-tab" data-tab="documents">📄 Evraklar</button>
@@ -380,6 +431,11 @@
       </div>
 
       <div id="brandPanelTrace" class="brand-panel-section"></div>
+
+      <!-- v68: Brand Intelligence + Growth Audit — SmartScout'un cevaplamadığı
+           "bu marka bizimle çalışır mı, neye ihtiyacı var, nasıl yaklaşmalıyız"
+           sorularının cevabı. Bkz. services/brandIntelligence.js. -->
+      <div id="brandPanelIntel" class="brand-panel-section" style="display:none;"></div>
 
       <div id="brandPanelTimeline" class="brand-panel-section" style="display:none;"></div>
 
@@ -403,8 +459,17 @@
 
       <div id="brandPanelAi" class="brand-panel-section" style="display:none;">
         <p class="muted">AI özellikleri isteğe bağlıdır ve sadece burada tıkladığında çalışır (otomatik/arka planda çalışmaz). Ayarlar'da bir Anthropic API anahtarı gerekir.</p>
+
+        <!-- v71: AI OUTREACH INTELLIGENCE — bu kutu AI ÇAĞRISI YAPMAZ (ücretsiz),
+             sekme açılır açılmaz zaten var olan Brand Intelligence verisinden
+             otomatik hesaplanır. "Neden bu markaya yazıyoruz" zincirini email
+             üretilmeden ÖNCE gösterir. -->
+        <div id="outreachIntelBox" style="margin-bottom:14px; padding:10px; border:1px solid #e5e5e5; border-radius:8px; background:#fafafa;">
+          <p class="muted">Yükleniyor...</p>
+        </div>
+
         <div class="toolbar">
-          <button id="aiPersonalizeBtn" class="small secondary">✍️ Kişiselleştirilmiş Giriş Üret</button>
+          <button id="aiPersonalizeBtn" class="small secondary">✍️ Outreach Email Üret</button>
           <button id="aiPriorityBtn" class="small secondary">🔥 Öncelik/Etiket Belirle</button>
           <button id="aiClassifyReplyBtn" class="small secondary">💬 Yanıtı Sınıflandır + Taslak Yaz</button>
         </div>

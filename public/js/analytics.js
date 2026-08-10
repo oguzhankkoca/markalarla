@@ -38,6 +38,31 @@ async function loadAnalytics() {
     .join("");
 }
 
+// v68: Brand Intelligence + Growth Audit — madde 29 basit sayaçlar. emailsSent/
+// replies/positiveReplies zaten brands tablosundan anlık hesaplanıyor;
+// wholesaleApplications/approvedBrands/firstOrders ise Marka Detay panelindeki
+// "Amazon Authorization Tracking" alanlarından elle işaretlendiğinde birikiyor
+// (bkz. routes/brandIntelligence.js). Karmaşık bir tahmin/ML sistemi YOK.
+async function loadGrowthMetrics() {
+  try {
+    const res = await fetch("/api/growth-metrics");
+    const data = await res.json();
+    if (!data.ok) return;
+    const m = data.metrics;
+    document.getElementById("growthMetricsStats").innerHTML = [
+      statCard(m.emailsSent, "Gönderilen Mail"),
+      statCard(m.replies, "Yanıt"),
+      statCard(m.positiveReplies, "Olumlu Yanıt"),
+      statCard(m.wholesaleApplications, "Wholesale Başvurusu"),
+      statCard(m.approvedBrands, "Onaylanan Marka"),
+      statCard(m.firstOrders, "İlk Sipariş"),
+      statCard("$" + Math.round(m.firstPoTotalValue).toLocaleString("en-US"), "İlk PO Toplam Değeri"),
+    ].join("");
+  } catch (e) {
+    // sessizce yut — dashboard'un geri kalanını etkilemesin
+  }
+}
+
 // v47: "Bugün Yapılacaklar" akıllı paneli — /api/dashboard/today'nin döndürdüğü
 // dağınık öğeleri (görevler, yanıt bekleyenler, belge istekleri, yüksek öncelikli
 // markalar, otomatik gönderim durumu) tek bir listede birleştirip gösterir.
@@ -262,6 +287,7 @@ async function loadAmazonInsights() {
 }
 
 loadAnalytics();
+loadGrowthMetrics();
 loadTodayPanel();
 loadTimeseriesChart();
 loadPipelineFunnelChart();

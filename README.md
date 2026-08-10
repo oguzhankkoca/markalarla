@@ -137,6 +137,48 @@ ANTHROPIC_API_KEY ile canlı email üretimi test edilmedi (bu ortamda anahtar yo
 — rol-yapma yöntemiyle (gerçek prompt kurallarına harfiyen uyularak elle yazılan
 örnek emailler) guardrail'den geçirildi, hepsi PASS etti.
 
+## Toplu Follow-up Gönderimi + Bounce Ayrımı (v75)
+
+İki istek üzerine v73'teki tekli manuel follow-up özelliği genişletildi:
+
+**1. Toplu follow-up gönderimi.** Artık Takip Listesi'nde birden fazla markayı
+seçip (checkbox) tek seferde follow-up gönderebilirsin. Backend'de
+`POST /api/tracking/send-followup-batch` — tıpkı ana Marka Listesi'ndeki toplu
+gönderim (`/api/brands/send-batch`) gibi arka planda bir kuyrukla çalışır,
+istek hemen döner, gerçek gönderim gönderimler arası rastgele 2-5 saniye
+bekleyerek (spam görünümünü azaltmak için) arka planda devam eder. İlerleme,
+sayfanın neresinde olursan ol görünen aynı ilerleme kartıyla (`jobStatusToast.js`)
+takip edilir. `POST /api/tracking/send-followup-batch/stop` ile yarıda
+durdurulabilir, `GET .../status` ile durumu (kaç gönderildi/atlandı, hangi
+marka işleniyor, atlananların nedeni) sorgulanabilir.
+
+Hem tekli hem toplu route artık AYNI paylaşılan fonksiyonu (`sendFollowUpForBrand`)
+kullanıyor — iki yerde farklı/tutarsız bir kural riski yok.
+
+**2. "İlk mail ulaşmadıysa ikincisi nasıl ulaşsın" ayrımı.** Kullanıcı haklı
+olarak, ilk maili geri dönen (bounce) markalara follow-up göndermenin anlamsız
+olduğunu belirtti. Bu KOD SEVİYESİNDE zaten engelliydi (`brand.bounced` kontrolü),
+ama bunu UI'da da AÇIKÇA ayırmak için:
+- Yeni bir filtre sekmesi: **"✉️ Follow-up'a Uygun"** — SADECE ilk maili gerçekten
+  almış (bounce olmamış), DO_NOT_CONTACT olmayan, olumlu/nötr yanıt vermemiş ve
+  3 aşaması tamamlanmamış markaları gösterir. Bounce olan markalar bu sekmede
+  HİÇ görünmez (zaten ayrı "Ulaşmayanlar" kartında listeleniyorlar).
+- Takip Aşaması hücresinde, bounce olan markalar için follow-up butonu yerine
+  açıkça **"📪 İlk mail ulaşmadı"** yazısı gösteriliyor.
+- Checkbox'lar sadece gerçekten uygun markalarda aktif — bounce/DNC/tamamlanmış/
+  olumlu-yanıt-almış markalarda checkbox devre dışı, toplu seçime hiç girmiyor.
+
+**Bug fix (test sırasında bulundu):** `status='bounced'` olan markalar eskiden
+"henüz ilk email gönderilmemiş" gibi yanlış/yanıltıcı bir hata mesajı alıyordu
+(kontrol sırası yanlıştı — sadece `status==='sent'` aranıyordu). Artık `bounced`
+durumu doğru, kendi mesajıyla ayrı olarak tanınıyor.
+
+27 senaryoluk bir test setiyle doğrulandı (tekli: 13, toplu: 14) — gerçek route
+kodu çalıştırılarak: normal aşama ilerlemesi, DNC/suppressed/bounce/olumlu-yanıt
+engelleme, olumsuz-yanıtta izin verme, aynı anda ikinci bir toplu gönderimin
+engellenmesi, durdur, boş seçim hatası, ve DB güncellemelerinin doğruluğu.
+Tam regresyon paketi (12/12) değişmeden geçmeye devam ediyor.
+
 ## Bug Fix: İletişim Formu'na Kopyalanan Mail Metni Birbirine Giriyordu (v74)
 
 Email adresi bulunamayıp "İletişim Formu" linkine yönlendirilen markalarda, "Form

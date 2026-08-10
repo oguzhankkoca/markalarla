@@ -28,6 +28,13 @@ let mainTemplate = null;
 let currentTrackingFilter = "all";
 let lastRestList = [];
 
+// v75: Toplu follow-up gönderimi için seçili marka id'leri (string olarak tutulur,
+// dataset.id her zaman string döner). Sadece follow-up'a UYGUN (bkz.
+// isFollowUpEligible) markalar seçilebilir — bounce/DNC/tamamlanmış/olumlu-yanıt
+// verenler zaten checkbox'ı disabled geliyor, seçime hiç girmiyor.
+let selectedFollowupIds = new Set();
+let followupBatchPollTimer = null;
+
 function fillTemplateTracking(text, brandName) {
   return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
 }
@@ -116,6 +123,23 @@ function sentimentSelect(brandId) {
 }
 
 // Takip Listesi filtre sekmeleri: bir markanın hangi kategoriye girdiğini belirler.
+// v75: Bir markanın follow-up gönderimi için GERÇEKTEN uygun olup olmadığını
+// belirler — backend'deki sendFollowUpForBrand() ile AYNI kurallar (DO_NOT_CONTACT,
+// suppression client-side bilinmiyor ama diğerleri biliniyor, kesin kontrol zaten
+// backend'de tekrar yapılıyor). En kritik ayrım (kullanıcı talebi): ilk mail
+// bounce olduysa (b.bounced) bu marka KESİNLİKLE uygun değildir — "ilk mail
+// ulaşmadıysa ikincisi nasıl ulaşsın" mantığı.
+function isFollowUpEligible(b) {
+  const stage = b.follow_up_stage || 0;
+  return (
+    b.status === "sent" &&
+    !b.bounced &&
+    b.action_badge !== "DO_NOT_CONTACT" &&
+    stage < 3 &&
+    (!b.replied || b.reply_sentiment === "negative")
+  );
+}
+
 function matchesTrackingFilter(b, filter) {
   switch (filter) {
     case "all":
@@ -130,6 +154,8 @@ function matchesTrackingFilter(b, filter) {
       return Boolean(b.replied) && (!b.reply_sentiment || b.reply_sentiment === "neutral");
     case "document":
       return Boolean(b.document_requested);
+    case "followup_eligible":
+      return isFollowUpEligible(b);
     default:
       return true;
   }
@@ -143,6 +169,7 @@ function renderTrackingFilterTabs(list) {
     negative: list.filter((b) => b.reply_sentiment === "negative").length,
     neutral: list.filter((b) => b.replied && (!b.reply_sentiment || b.reply_sentiment === "neutral")).length,
     document: list.filter((b) => b.document_requested).length,
+    followup_eligible: list.filter(isFollowUpEligible).length,
   };
   const idMap = {
     all: "trackCountAll",
@@ -151,6 +178,7 @@ function renderTrackingFilterTabs(list) {
     negative: "trackCountNegative",
     neutral: "trackCountNeutral",
     document: "trackCountDocument",
+    followup_eligible: "trackCountFollowupEligible",
   };
   Object.entries(counts).forEach(([key, val]) => {
     const el = document.getElementById(idMap[key]);
@@ -177,20 +205,16 @@ function renderTracking(brands) {
     const stageText = stage > 0 ? `${stage}/3 gönderildi` : "Henüz gönderilmedi";
 
     // Manuel "Follow-up Gönder" butonu: sadece gerçekten uygunsa gösterilir —
-    // otomatik akışın (runFullCheck) kullandığı AYNI kurallar: ilk mail gönderilmiş
-    // olmalı, bounce olmamalı, olumlu/nötr yanıt gelmemiş olmalı (olumsuz yanıtta
-    // otomatik sistem de follow-up'a devam ediyor), 3 aşama tamamlanmamış olmalı,
-    // ve DO_NOT_CONTACT olmamalı.
+    // otomatik akışın (runFullCheck) kullandığı AYNI kurallar (bkz. isFollowUpEligible,
+    // yukarıda) — özellikle: ilk mail bounce olduysa (b.bounced) BU MARKA follow-up'a
+    // KESİNLİKLE uygun değildir, çünkü ilk mail zaten ulaşmadı.
     const dncBadge = b.action_badge === "DO_NOT_CONTACT";
-    const canFollowUp =
-      b.status === "sent" &&
-      !b.bounced &&
-      !dncBadge &&
-      stage < 3 &&
-      (!b.replied || b.reply_sentiment === "negative");
+    const canFollowUp = isFollowUpEligible(b);
     let followUpBtnHtml;
     if (dncBadge) {
       followUpBtnHtml = `<button class="small secondary" disabled title="DO_NOT_CONTACT — Brand Intelligence bu markaya satış/marketplace outreach'ini yasaklıyor.">🚫 Follow-up Engelli</button>`;
+    } else if (b.bounced) {
+      followUpBtnHtml = `<span class="muted" title="İlk mail geri döndü (bounce) — bu adrese ulaşılamadı, follow-up gönderilmez.">📪 İlk mail ulaşmadı</span>`;
     } else if (stage >= 3) {
       followUpBtnHtml = `<span class="muted" style="display:block;margin-top:4px;">3 aşama tamamlandı</span>`;
     } else if (canFollowUp) {
@@ -198,6 +222,9 @@ function renderTracking(brands) {
     } else {
       followUpBtnHtml = "";
     }
+    const checkboxHtml = canFollowUp
+      ? `<input type="checkbox" class="followup-row-checkbox" data-id="${b.id}" ${selectedFollowupIds.has(String(b.id)) ? "checked" : ""} />`
+      : `<input type="checkbox" disabled title="Follow-up'a uygun değil" />`;
 
     // Bug fix (görünürlük): bu marka aynı e-posta/domain'i başka bir markayla
     // paylaşıyor olabileceği için gelen bir yanıt burada belirsiz kaldıysa,
@@ -212,6 +239,7 @@ function renderTracking(brands) {
     const replyFromText = b.reply_from ? `<div class="muted" style="margin-top:2px;">Gönderen: ${escapeHtml(b.reply_from)}</div>` : "";
 
     tr.innerHTML = `
+      <td>${checkboxHtml}</td>
       <td>${b.name}<br><span class="muted">${b.email || ""}</span></td>
       <td>${sentAtText}</td>
       <td>
@@ -273,6 +301,15 @@ function renderTracking(brands) {
     });
   });
 
+  document.querySelectorAll(".followup-row-checkbox").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedFollowupIds.add(cb.dataset.id);
+      else selectedFollowupIds.delete(cb.dataset.id);
+      updateFollowupSelectionUI();
+    });
+  });
+  updateFollowupSelectionUI();
+
   document.querySelectorAll(".doc-done-btn-row").forEach((btn) => {
     btn.addEventListener("click", async () => {
       btn.disabled = true;
@@ -310,6 +347,119 @@ function renderTracking(brands) {
         body: JSON.stringify({ deal_stage: sel.value }),
       });
     });
+  });
+}
+
+// v75: Seçili sayısını + "Seçilenlere Follow-up Gönder" butonunun durumunu +
+// başlıktaki "tümünü seç" kutucuğunun tri-state (hepsi/bazısı/hiçbiri) görünümünü
+// günceller. Her renderTracking() çağrısından sonra çalışır (filtre değişince de).
+function updateFollowupSelectionUI() {
+  const countEl = document.getElementById("followupSelectedCount");
+  const sendBtn = document.getElementById("sendFollowupBatchBtn");
+  const headerCb = document.getElementById("trackHeaderCheckbox");
+  if (countEl) countEl.textContent = `${selectedFollowupIds.size} marka seçili`;
+  if (sendBtn) sendBtn.disabled = selectedFollowupIds.size === 0;
+  if (headerCb) {
+    const visibleEligible = Array.from(document.querySelectorAll(".followup-row-checkbox"));
+    if (visibleEligible.length === 0) {
+      headerCb.checked = false;
+      headerCb.indeterminate = false;
+    } else {
+      const allChecked = visibleEligible.every((cb) => cb.checked);
+      const someChecked = visibleEligible.some((cb) => cb.checked);
+      headerCb.checked = allChecked;
+      headerCb.indeterminate = someChecked && !allChecked;
+    }
+  }
+}
+
+const trackHeaderCheckboxEl = document.getElementById("trackHeaderCheckbox");
+if (trackHeaderCheckboxEl) {
+  trackHeaderCheckboxEl.addEventListener("change", () => {
+    // Sadece o an TABLODA GÖRÜNEN (mevcut filtreye uyan), follow-up'a uygun
+    // markaları seçer/kaldırır — görünmeyen (başka filtredeki) seçimlere dokunmaz.
+    document.querySelectorAll(".followup-row-checkbox").forEach((cb) => {
+      cb.checked = trackHeaderCheckboxEl.checked;
+      if (trackHeaderCheckboxEl.checked) selectedFollowupIds.add(cb.dataset.id);
+      else selectedFollowupIds.delete(cb.dataset.id);
+    });
+    updateFollowupSelectionUI();
+  });
+}
+
+async function pollFollowupBatchStatus() {
+  const sendBtn = document.getElementById("sendFollowupBatchBtn");
+  const stopBtn = document.getElementById("stopFollowupBatchBtn");
+  try {
+    const res = await fetch("/api/tracking/send-followup-batch/status");
+    const data = await res.json();
+    if (!data.running) {
+      clearInterval(followupBatchPollTimer);
+      followupBatchPollTimer = null;
+      if (stopBtn) stopBtn.style.display = "none";
+      if (sendBtn) {
+        sendBtn.disabled = selectedFollowupIds.size === 0;
+        sendBtn.textContent = "✉️ Seçilenlere Follow-up Gönder";
+      }
+      if (data.total > 0) {
+        const skippedText =
+          data.skipped && data.skipped.length > 0
+            ? `\n\nAtlanan/engellenen ${data.skipped.length} marka:\n` +
+              data.skipped.map((s) => `- ${s.name}: ${s.reason}`).join("\n")
+            : "";
+        alert(`Toplu follow-up tamamlandı: ${data.sentCount} gönderildi, ${data.failedCount} atlandı/başarısız.${skippedText}`);
+      }
+      selectedFollowupIds.clear();
+      loadTracking();
+    }
+  } catch (e) {
+    // sessizce geç, jobStatusToast.js zaten genel ilerleme kartını gösteriyor
+  }
+}
+
+const sendFollowupBatchBtnEl = document.getElementById("sendFollowupBatchBtn");
+if (sendFollowupBatchBtnEl) {
+  sendFollowupBatchBtnEl.addEventListener("click", async () => {
+    const ids = Array.from(selectedFollowupIds);
+    if (ids.length === 0) return;
+    if (!confirm(`${ids.length} markaya sırada bekleyen bir sonraki follow-up aşaması gönderilsin mi? Gönderimler arasında (spam görünmemesi için) birkaç saniye ara olacak.`)) {
+      return;
+    }
+    sendFollowupBatchBtnEl.disabled = true;
+    sendFollowupBatchBtnEl.textContent = "Gönderiliyor...";
+    const stopBtn = document.getElementById("stopFollowupBatchBtn");
+    if (stopBtn) stopBtn.style.display = "";
+    try {
+      const res = await fetch("/api/tracking/send-followup-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert("Toplu follow-up başlatılamadı: " + (data.error || "Bilinmeyen hata"));
+        sendFollowupBatchBtnEl.disabled = false;
+        sendFollowupBatchBtnEl.textContent = "✉️ Seçilenlere Follow-up Gönder";
+        if (stopBtn) stopBtn.style.display = "none";
+        return;
+      }
+      if (!followupBatchPollTimer) {
+        followupBatchPollTimer = setInterval(pollFollowupBatchStatus, 3000);
+      }
+    } catch (e) {
+      alert("Hata: " + e.message);
+      sendFollowupBatchBtnEl.disabled = false;
+      sendFollowupBatchBtnEl.textContent = "✉️ Seçilenlere Follow-up Gönder";
+      if (stopBtn) stopBtn.style.display = "none";
+    }
+  });
+}
+
+const stopFollowupBatchBtnEl = document.getElementById("stopFollowupBatchBtn");
+if (stopFollowupBatchBtnEl) {
+  stopFollowupBatchBtnEl.addEventListener("click", async () => {
+    await fetch("/api/tracking/send-followup-batch/stop", { method: "POST" });
+    stopFollowupBatchBtnEl.textContent = "Durduruluyor...";
   });
 }
 

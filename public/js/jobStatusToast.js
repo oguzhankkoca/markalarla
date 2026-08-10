@@ -64,12 +64,15 @@
 
   async function pollOnce() {
     try {
-      const [findRes, sendRes] = await Promise.all([
+      const [findRes, sendRes, followupRes] = await Promise.all([
         fetch("/api/brands/find-all/status"),
         fetch("/api/brands/send-batch/status"),
+        // v75: toplu follow-up gönderimi de arka planda çalışıyor, aynı kartla takip edilir.
+        fetch("/api/tracking/send-followup-batch/status").catch(() => null),
       ]);
       const find = await findRes.json();
       const send = await sendRes.json();
+      const followup = followupRes ? await followupRes.json() : { running: false, total: 0 };
 
       if (find.running && find.total > 0) {
         if (currentJobKind !== "find") {
@@ -84,8 +87,20 @@
         }
         const done = send.sentCount + send.failedCount;
         window.updateProgressToast(done, send.total, send.currentBrandName);
+      } else if (followup.running && followup.total > 0) {
+        if (currentJobKind !== "followup") {
+          window.showProgressToast(`✉️ Toplu Follow-up (${followup.total})`);
+          currentJobKind = "followup";
+        }
+        const done = followup.sentCount + followup.failedCount;
+        window.updateProgressToast(done, followup.total, followup.currentBrandName);
       } else if (currentJobKind) {
-        const doneCount = currentJobKind === "find" ? find.processedCount : send.sentCount + send.failedCount;
+        const doneCount =
+          currentJobKind === "find"
+            ? find.processedCount
+            : currentJobKind === "send"
+            ? send.sentCount + send.failedCount
+            : followup.sentCount + followup.failedCount;
         window.finishProgressToast(doneCount);
         currentJobKind = null;
       }

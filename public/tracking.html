@@ -197,11 +197,24 @@
             <button class="track-filter-tab" data-filter="negative">👎 Olumsuz <span class="filter-count" id="trackCountNegative">0</span></button>
             <button class="track-filter-tab" data-filter="neutral">❓ Belirsiz <span class="filter-count" id="trackCountNeutral">0</span></button>
             <button class="track-filter-tab" data-filter="document">📎 Belge Bekleyen <span class="filter-count" id="trackCountDocument">0</span></button>
+            <button class="track-filter-tab" data-filter="followup_eligible">✉️ Follow-up'a Uygun <span class="filter-count" id="trackCountFollowupEligible">0</span></button>
+          </div>
+          <p class="muted" style="margin-top:6px;">
+            <b>"✉️ Follow-up'a Uygun"</b> sekmesi, ilk maili gerçekten ALMIŞ (geri dönmemiş/bounce
+            olmamış), DO_NOT_CONTACT olmayan, henüz olumlu/nötr yanıt vermemiş ve 3 aşaması
+            tamamlanmamış markaları gösterir — ilk mail hiç ulaşmadıysa (bounce) o marka buraya
+            hiç girmez, çünkü ikinci mailin ulaşması da beklenmez (bkz. "Ulaşmayanlar" kartı).
+          </p>
+          <div class="toolbar" id="followupBulkToolbar" style="margin-top:6px;">
+            <span id="followupSelectedCount" class="muted">0 marka seçili (tablo başlığındaki kutucukla, görünen follow-up'a uygun tüm markaları seçebilirsin)</span>
+            <button id="sendFollowupBatchBtn" disabled>✉️ Seçilenlere Follow-up Gönder</button>
+            <button id="stopFollowupBatchBtn" class="secondary" style="display:none;">Durdur</button>
           </div>
           <div style="overflow-x:auto;">
           <table id="trackingTable">
             <thead>
               <tr>
+                <th><input type="checkbox" id="trackHeaderCheckbox" title="Görünen, follow-up'a uygun tüm markaları seç" /></th>
                 <th>Marka</th>
                 <th>Gönderildi</th>
                 <th>Yanıt</th>

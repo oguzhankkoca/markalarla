@@ -660,44 +660,56 @@ router.post("/api/tracking/followup-template", (req, res) => {
   res.json({ ok: true });
 });
 
-// Tek bir markaya, sırada bekleyen BİR SONRAKİ follow-up aşamasını (7/15/30 gün
-// takviminden) elle/hemen göndermek için — otomatik cron'un (runFullCheck,
-// yukarıda) gün eşiğini beklemeden. Kullanıcı "geri dönmeyen markalara tek tek
-// follow-up atabilmek" istediği için eklendi. AYNI şablonları, AYNI
-// buildFollowUpExtras/fillTemplate mantığını ve AYNI güvenlik kontrollerini
-// (DO_NOT_CONTACT, kalıcı suppression, yanıt/bounce durumu) kullanıyor — otomatik
+// Bir markaya, sırada bekleyen BİR SONRAKİ follow-up aşamasını (7/15/30 gün
+// takviminden) elle/hemen gönderir — otomatik cron'un (runFullCheck, yukarıda)
+// gün eşiğini beklemeden. Hem tekli hem toplu (batch) follow-up route'u AYNI bu
+// fonksiyonu kullanıyor — iki yerde farklı/tutarsız bir kural riski olmasın diye.
+// AYNI şablonlar, AYNI buildFollowUpExtras/fillTemplate mantığı ve AYNI güvenlik
+// kontrolleri (DO_NOT_CONTACT, kalıcı suppression, yanıt/bounce durumu) — otomatik
 // akıştan farklı/gevşek bir kural YOK, sadece gün bekleme şartı manuel olarak
-// atlanabiliyor.
-router.post("/api/tracking/:id/send-followup", async (req, res) => {
-  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
-  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
-  if (!brand.email) return res.status(400).json({ error: "Bu markanın kayıtlı bir e-posta adresi yok." });
-  if (brand.status !== "sent") {
-    return res.status(409).json({ error: "Bu markaya henüz ilk email gönderilmemiş — önce ilk emaili gönder." });
+// atlanabiliyor. Dönüş: { ok:true, stage, subject, body } ya da { ok:false, status, error }.
+async function sendFollowUpForBrand(brand) {
+  if (!brand) return { ok: false, status: 404, error: "Marka bulunamadı." };
+  if (!brand.email) return { ok: false, status: 400, error: "Bu markanın kayıtlı bir e-posta adresi yok." };
+  // Bug fix (test sırasında bulundu): status='bounced' olan markalar da "ilk mail
+  // gönderilmiş" sayılır (gönderim GERÇEKLEŞTİ, sadece geri döndü) — bu kontrolü
+  // SADECE status==='sent' ile yapmak, bounce olan markalar için yanıltıcı bir
+  // "henüz ilk email gönderilmemiş" mesajı veriyordu, oysa doğru sebep aşağıdaki
+  // bounce kontrolüydü. Şimdi "hiç gönderilmemiş" (status: found/pending vb.) ile
+  // "gönderildi ama geri döndü" (status: bounced) ayrı, doğru mesajlarla ayrılıyor.
+  if (brand.status !== "sent" && brand.status !== "bounced") {
+    return { ok: false, status: 409, error: "Bu markaya henüz ilk email gönderilmemiş — önce ilk emaili gönder." };
+  }
+  // Kullanıcı talebi: ilk mail zaten geri döndüyse (bounce = geçersiz/erişilemeyen
+  // adres), bu adrese follow-up göndermek de aynı sebeple başarısız olur — "ilk
+  // mail ulaşmadıysa ikincisi nasıl ulaşsın" mantığıyla bu markalar follow-up
+  // adaylarından KESİN olarak ayrılıyor (hem burada hem de UI filtresinde/
+  // "Follow-up'a Uygun" sekmesinde, hem de "Ulaşmayanlar" kartında ayrıca gösteriliyor).
+  if (brand.bounced || brand.status === "bounced") {
+    return { ok: false, status: 409, error: "İlk mail geri döndü (bounce) — bu adrese ulaşılamadığı için follow-up gönderilmez." };
   }
 
   // brands.js'deki AYNI DO_NOT_CONTACT kontrolü (v71 QA fix'inin devamı — ilk
   // gönderim için geçerli olan kural follow-up için de İSTİSNASIZ geçerli).
   const { isDoNotContact } = require("./brands");
   if (isDoNotContact(brand.id)) {
-    return res.status(409).json({
-      error: "Bu marka DO_NOT_CONTACT durumunda — Brand Intelligence araştırması Amazon/marketplace satışının yasak olduğunu ya da kritik bir red flag bulunduğunu tespit etti. Follow-up gönderimi engellendi.",
-    });
+    return {
+      ok: false,
+      status: 409,
+      error: "DO_NOT_CONTACT durumunda — Brand Intelligence araştırması Amazon/marketplace satışının yasak olduğunu ya da kritik bir red flag bulunduğunu tespit etti.",
+    };
   }
   if (isSuppressed(brand.email)) {
-    return res.status(409).json({ error: "Bu e-posta kalıcı 'bir daha yazma' listesinde — follow-up gönderilemez." });
-  }
-  if (brand.bounced) {
-    return res.status(409).json({ error: "Bu markanın maili daha önce geri döndü (bounce) — follow-up gönderilemez." });
+    return { ok: false, status: 409, error: "Bu e-posta kalıcı 'bir daha yazma' listesinde." };
   }
   if (brand.replied && brand.reply_sentiment !== "negative") {
-    return res.status(409).json({ error: "Bu marka zaten yanıt verdi — follow-up gönderilmesine gerek yok." });
+    return { ok: false, status: 409, error: "Zaten yanıt verdi — follow-up gönderilmesine gerek yok." };
   }
 
   const currentStage = brand.follow_up_stage || 0;
   const nextStage = currentStage + 1;
   if (nextStage > FOLLOW_UP_SCHEDULE.length) {
-    return res.status(409).json({ error: "Bu marka için 3 aşamalı follow-up takvimi zaten tamamlandı." });
+    return { ok: false, status: 409, error: "3 aşamalı follow-up takvimi zaten tamamlandı." };
   }
 
   try {
@@ -721,10 +733,85 @@ router.post("/api/tracking/:id/send-followup", async (req, res) => {
     );
     logEvent(brand.id, "followup_sent_manual", `${nextStage}. aşama follow-up elle gönderildi.`);
 
-    res.json({ ok: true, stage: nextStage, subject, body });
+    return { ok: true, stage: nextStage, subject, body };
   } catch (err) {
-    res.status(500).json({ error: "Follow-up gönderilemedi: " + err.message });
+    return { ok: false, status: 500, error: "Gönderilemedi: " + err.message };
   }
+}
+
+router.post("/api/tracking/:id/send-followup", async (req, res) => {
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  const result = await sendFollowUpForBrand(brand);
+  if (!result.ok) return res.status(result.status || 500).json({ error: result.error });
+  res.json({ ok: true, stage: result.stage, subject: result.subject, body: result.body });
+});
+
+// v75: Toplu (birden fazla marka için tek seferde) follow-up gönderimi.
+// brands.js'teki /api/brands/send-batch ile AYNI arka-plan kuyruk deseni:
+// istek hemen "queued" döner, gerçek gönderim arka planda, gönderimler arası
+// rastgele 2-5 saniye bekleyerek (spam görünümünü azaltmak için) devam eder.
+// İlerleme jobStatusToast.js üzerinden (bkz. public/js/jobStatusToast.js)
+// TÜM sayfalarda görünen aynı ilerleme kartıyla takip edilir.
+const followUpBatchJob = {
+  running: false,
+  remainingIds: [],
+  total: 0,
+  sentCount: 0,
+  failedCount: 0,
+  currentBrandName: null,
+  skipped: [], // [{id, name, reason}] — engellenen/atlanan markalar (audit için)
+};
+
+async function processFollowUpBatchQueue() {
+  followUpBatchJob.running = true;
+  while (followUpBatchJob.remainingIds.length > 0) {
+    const id = followUpBatchJob.remainingIds.shift();
+    const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(id);
+    followUpBatchJob.currentBrandName = brand ? brand.name : `#${id}`;
+    const result = await sendFollowUpForBrand(brand);
+    if (result.ok) {
+      followUpBatchJob.sentCount++;
+    } else {
+      followUpBatchJob.failedCount++;
+      followUpBatchJob.skipped.push({ id, name: brand ? brand.name : `#${id}`, reason: result.error });
+    }
+    if (followUpBatchJob.remainingIds.length > 0) {
+      await sleep(2000 + Math.floor(Math.random() * 3000));
+    }
+  }
+  followUpBatchJob.running = false;
+  followUpBatchJob.currentBrandName = null;
+}
+
+router.post("/api/tracking/send-followup-batch", (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "Marka seçilmedi." });
+  if (followUpBatchJob.running) {
+    return res.status(409).json({ error: "Zaten devam eden bir toplu follow-up gönderimi var." });
+  }
+  followUpBatchJob.remainingIds = ids.slice();
+  followUpBatchJob.total = ids.length;
+  followUpBatchJob.sentCount = 0;
+  followUpBatchJob.failedCount = 0;
+  followUpBatchJob.skipped = [];
+  processFollowUpBatchQueue(); // kasıtlı olarak await edilmiyor — arka planda devam eder
+  res.json({ ok: true, queued: ids.length });
+});
+
+router.get("/api/tracking/send-followup-batch/status", (req, res) => {
+  res.json({
+    running: followUpBatchJob.running,
+    total: followUpBatchJob.total,
+    sentCount: followUpBatchJob.sentCount,
+    failedCount: followUpBatchJob.failedCount,
+    currentBrandName: followUpBatchJob.currentBrandName,
+    skipped: followUpBatchJob.skipped,
+  });
+});
+
+router.post("/api/tracking/send-followup-batch/stop", (req, res) => {
+  followUpBatchJob.remainingIds = [];
+  res.json({ ok: true });
 });
 
 // Soğuk marka yeniden ısıtmayı elle (test amaçlı) hemen çalıştırmak için.
@@ -891,6 +978,7 @@ module.exports = router;
 module.exports.runFullCheck = runFullCheck;
 module.exports.sendWeeklySummary = sendWeeklySummary;
 module.exports.reWarmColdBrands = reWarmColdBrands;
+module.exports.sendFollowUpForBrand = sendFollowUpForBrand;
 // Test setinin (tests/) gerçek güvenlik freni mantığını doğrudan çağırabilmesi için.
 module.exports.checkAndUpdateCircuitBreaker = checkAndUpdateCircuitBreaker;
 module.exports.CIRCUIT_BREAKER_MIN_SAMPLE = CIRCUIT_BREAKER_MIN_SAMPLE;

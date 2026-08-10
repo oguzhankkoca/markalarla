@@ -609,9 +609,15 @@ async function runFullCheck() {
 
 // Gönderilmiş tüm markaları, gün sayısı ve yanıt/pipeline durumu ile birlikte listele
 router.get("/api/tracking", (req, res) => {
+  // Follow-up butonunun hangi markalarda gösterileceğine/engelleneceğine (DO_NOT_CONTACT)
+  // client-side karar verebilmesi için action_badge de listeye ekleniyor (brands.js'teki
+  // GET /api/brands ile AYNI LEFT JOIN kalıbı).
   const brands = db
     .prepare(
-      `SELECT * FROM brands WHERE status IN ('sent', 'bounced') OR replied = 1 ORDER BY sent_at DESC`
+      `SELECT brands.*, brand_intelligence.action_badge AS action_badge
+       FROM brands LEFT JOIN brand_intelligence ON brand_intelligence.brand_id = brands.id
+       WHERE brands.status IN ('sent', 'bounced') OR brands.replied = 1
+       ORDER BY brands.sent_at DESC`
     )
     .all();
 
@@ -652,6 +658,73 @@ router.post("/api/tracking/followup-template", (req, res) => {
     stage3?.body || ""
   );
   res.json({ ok: true });
+});
+
+// Tek bir markaya, sırada bekleyen BİR SONRAKİ follow-up aşamasını (7/15/30 gün
+// takviminden) elle/hemen göndermek için — otomatik cron'un (runFullCheck,
+// yukarıda) gün eşiğini beklemeden. Kullanıcı "geri dönmeyen markalara tek tek
+// follow-up atabilmek" istediği için eklendi. AYNI şablonları, AYNI
+// buildFollowUpExtras/fillTemplate mantığını ve AYNI güvenlik kontrollerini
+// (DO_NOT_CONTACT, kalıcı suppression, yanıt/bounce durumu) kullanıyor — otomatik
+// akıştan farklı/gevşek bir kural YOK, sadece gün bekleme şartı manuel olarak
+// atlanabiliyor.
+router.post("/api/tracking/:id/send-followup", async (req, res) => {
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
+  if (!brand.email) return res.status(400).json({ error: "Bu markanın kayıtlı bir e-posta adresi yok." });
+  if (brand.status !== "sent") {
+    return res.status(409).json({ error: "Bu markaya henüz ilk email gönderilmemiş — önce ilk emaili gönder." });
+  }
+
+  // brands.js'deki AYNI DO_NOT_CONTACT kontrolü (v71 QA fix'inin devamı — ilk
+  // gönderim için geçerli olan kural follow-up için de İSTİSNASIZ geçerli).
+  const { isDoNotContact } = require("./brands");
+  if (isDoNotContact(brand.id)) {
+    return res.status(409).json({
+      error: "Bu marka DO_NOT_CONTACT durumunda — Brand Intelligence araştırması Amazon/marketplace satışının yasak olduğunu ya da kritik bir red flag bulunduğunu tespit etti. Follow-up gönderimi engellendi.",
+    });
+  }
+  if (isSuppressed(brand.email)) {
+    return res.status(409).json({ error: "Bu e-posta kalıcı 'bir daha yazma' listesinde — follow-up gönderilemez." });
+  }
+  if (brand.bounced) {
+    return res.status(409).json({ error: "Bu markanın maili daha önce geri döndü (bounce) — follow-up gönderilemez." });
+  }
+  if (brand.replied && brand.reply_sentiment !== "negative") {
+    return res.status(409).json({ error: "Bu marka zaten yanıt verdi — follow-up gönderilmesine gerek yok." });
+  }
+
+  const currentStage = brand.follow_up_stage || 0;
+  const nextStage = currentStage + 1;
+  if (nextStage > FOLLOW_UP_SCHEDULE.length) {
+    return res.status(409).json({ error: "Bu marka için 3 aşamalı follow-up takvimi zaten tamamlandı." });
+  }
+
+  try {
+    const settings = db.prepare("SELECT * FROM settings WHERE id = 1").get();
+    const template = getFollowUpTemplate(settings, nextStage);
+    // Sadece 2. aşamada (Day 15, value-oriented) gerçek bir Brand Intelligence
+    // bulgusu aranır — 1. ve 3. aşama şablonlarında bu placeholder'lar zaten yok.
+    const extras = nextStage === 2 ? buildFollowUpExtras(brand.id) : {};
+    const subject = fillTemplate(template.subject, brand.name, extras);
+    const body = fillTemplate(template.body, brand.name, extras);
+
+    const sendInfo = await mailer.sendMail({ to: brand.email, subject, body, trackOpenBrandId: brand.id });
+
+    db.prepare(
+      `UPDATE brands SET follow_up_stage = ?, last_follow_up_at = CURRENT_TIMESTAMP,
+       follow_up_sent_at = CURRENT_TIMESTAMP, sent_message_id = ? WHERE id = ?`
+    ).run(nextStage, (sendInfo && sendInfo.messageId) || brand.sent_message_id || null, brand.id);
+    db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
+      brand.id,
+      `${nextStage}. aşama follow-up ELLE gönderildi: ${brand.email}`
+    );
+    logEvent(brand.id, "followup_sent_manual", `${nextStage}. aşama follow-up elle gönderildi.`);
+
+    res.json({ ok: true, stage: nextStage, subject, body });
+  } catch (err) {
+    res.status(500).json({ error: "Follow-up gönderilemedi: " + err.message });
+  }
 });
 
 // Soğuk marka yeniden ısıtmayı elle (test amaçlı) hemen çalıştırmak için.

@@ -50,11 +50,31 @@ function wireRichTextToolbars() {
   });
 }
 
-// Spam kelime kontrolü gibi düz metin analizleri için HTML etiketlerinden arındırılmış hali.
+// Bug fix: Spam kelime kontrolü, panoya kopyalama (İletişim Formu linki) ve
+// diğer düz metin analizleri için HTML etiketlerinden arındırılmış hali üretir.
+// ESKİDEN: tmp.textContent/innerText kullanılıyordu — bu, <p>/<div>/<br>/<li>
+// gibi blok etiketleri arasına HİÇBİR satır sonu eklemediği için "<p>A</p><p>B</p>"
+// gibi bir metin "AB" olarak birleşip paragrafların birbirine girmesine neden
+// oluyordu (İletişim Formu'na kopyalanan mail metni, gerçekte gönderilen mailin
+// göründüğü gibi değil, tek bir satırda karışık görünüyordu). ARTIK: gerçek mail
+// gönderiminde zaten kullanılan, doğru satır sonu üreten AYNI etiket-bazlı
+// dönüşüm mantığı (bkz. src/services/mailer.js -> htmlToPlainText) burada da
+// kullanılıyor — iki yerdeki (gönderilen mail vs kopyalanan metin) sonuç artık
+// TUTARLI.
 function richTextToPlain(html) {
-  const tmp = document.createElement("div");
-  tmp.innerHTML = html || "";
-  return tmp.textContent || tmp.innerText || "";
+  return (html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function badge(status) {

@@ -1218,3 +1218,4 @@ module.exports.resolveStatusAndDuplicateFlag = resolveStatusAndDuplicateFlag;
 module.exports.getEffectiveDailyLimit = getEffectiveDailyLimit;
 module.exports.isLikelyBusinessHoursForCountry = isLikelyBusinessHoursForCountry;
 module.exports.QUOTA_TRACE_PATTERN = QUOTA_TRACE_PATTERN;
+module.exports.isDoNotContact = isDoNotContact;

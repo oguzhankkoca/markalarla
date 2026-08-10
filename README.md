@@ -137,6 +137,59 @@ ANTHROPIC_API_KEY ile canlı email üretimi test edilmedi (bu ortamda anahtar yo
 — rol-yapma yöntemiyle (gerçek prompt kurallarına harfiyen uyularak elle yazılan
 örnek emailler) guardrail'den geçirildi, hepsi PASS etti.
 
+## Bug Fix: İletişim Formu'na Kopyalanan Mail Metni Birbirine Giriyordu (v74)
+
+Email adresi bulunamayıp "İletişim Formu" linkine yönlendirilen markalarda, "Form
+Aç" butonu mail metnini panoya (clipboard) da kopyalıyordu — ama kopyalanan metin
+gerçekte gönderilen mail gibi görünmüyordu, paragraflar/liste maddeleri birbirine
+girmiş, tek bir satırda karışık şekilde geliyordu.
+
+**Kök neden:** Panoya kopyalama, zengin metin editöründeki HTML'i düz metne
+çevirirken (`richTextToPlain`, `public/js/app.js` + `public/js/tracking.js`)
+`tmp.textContent`/`innerText` kullanıyordu — bu, `<p>`, `<div>`, `<br>`, `<li>`
+gibi blok etiketleri arasına HİÇBİR satır sonu eklemez, bu yüzden `<p>A</p><p>B</p>`
+gibi bir HTML "AB" olarak birleşiyordu. Bu arada GERÇEK mail gönderiminde
+(`src/services/mailer.js` -> `htmlToPlainText`) tamamen farklı, doğru satır sonu
+üreten bir dönüştürücü kullanılıyordu — yani iki yerde tutarsız iki farklı
+dönüşüm vardı.
+
+**Düzeltme:** `richTextToPlain`, mail gönderiminde zaten kullanılan AYNI
+etiket-bazlı dönüşüm mantığıyla (`<br>`→satır sonu, `</p>`→çift satır sonu,
+`<li>`→"- " madde işareti vb.) değiştirildi — artık panoya kopyalanan metin,
+gerçekte gönderilecek mailin göründüğü gibi, doğru paragraf/madde ayrımıyla
+geliyor. Test edildi: paragraf+liste+satır-sonu içeren örnek bir HTML ile
+girdi/çıktı karşılaştırıldı, çıktı beklenen düz metinle birebir eşleşti.
+
+## Manuel Follow-up Gönderimi (v73)
+
+Şimdiye kadar 7/15/30 günlük follow-up dizisi SADECE otomatik cron ile (her gün
+08:00'de `runFullCheck`) çalışıyordu — geri dönmeyen bir markaya "hemen şimdi"
+follow-up atmak için hiçbir buton/uç nokta yoktu. Eklendi:
+
+- **Backend:** `POST /api/tracking/:id/send-followup` (`src/routes/tracking.js`).
+  Markanın `follow_up_stage`'ine bakıp bir SONRAKİ aşamayı (1/2/3) hemen gönderir
+  — otomatik cron'un kullandığı AYNI şablonları (`getFollowUpTemplate`), AYNI
+  Brand Intelligence bulgu enjeksiyonunu (`buildFollowUpExtras`, sadece 2.
+  aşamada) ve AYNI güvenlik kontrollerini kullanır: DO_NOT_CONTACT ise engellenir,
+  kalıcı "bir daha yazma" listesindeyse engellenir, mail daha önce geri döndüyse
+  (bounce) engellenir, marka olumlu/nötr yanıt verdiyse engellenir (olumsuz yanıt
+  verenlere otomatik sistem de follow-up'a devam ettiği için o durumda İZİN
+  VERİLİR), ilk mail hiç gönderilmediyse ya da 3 aşama zaten tamamlandıysa
+  engellenir. Her gönderim `send_log`'a "ELLE gönderildi" notuyla düşer — otomatik
+  gönderimlerden ayırt edilebilir.
+- **Frontend:** Takip Listesi tablosunda ("Gönderim Takibi" sayfası) her satırın
+  "Takip Aşaması" hücresine, uygunsa `✉️ N. Aşama Follow-up Gönder` butonu
+  eklendi; DO_NOT_CONTACT ise "🚫 Follow-up Engelli" (devre dışı, nedeni tooltip'te),
+  3 aşama tamamlandıysa "3 aşama tamamlandı" yazısı gösterilir. Tıklanınca hangi
+  aşamanın (kısa hatırlatma / değer odaklı takip / kapanış) gönderileceğini
+  onay penceresinde gösterir.
+
+19 senaryoluk bir test setiyle doğrulandı (gerçek route kodu çalıştırılarak):
+normal aşama ilerlemesi (1→2→3, 4.'te engellenir), DO_NOT_CONTACT/suppressed/
+bounce/olumlu-yanıt engelleme, olumsuz-yanıtta yine de izin verme, email yok/ilk
+mail gönderilmemiş/marka bulunamadı hata durumları, ve `send_log` kaydı — 19/19
+geçti. Tam regresyon paketi (12/12) değişmeden geçmeye devam ediyor.
+
 ## Outreach Quality Test ve Halüsinasyon Guardrail Fix'i (v72)
 
 v71'in Brand Intelligence → Outreach Intelligence → AI Email zincirinin

@@ -176,6 +176,29 @@ function renderTracking(brands) {
     const stage = b.follow_up_stage || 0;
     const stageText = stage > 0 ? `${stage}/3 gönderildi` : "Henüz gönderilmedi";
 
+    // Manuel "Follow-up Gönder" butonu: sadece gerçekten uygunsa gösterilir —
+    // otomatik akışın (runFullCheck) kullandığı AYNI kurallar: ilk mail gönderilmiş
+    // olmalı, bounce olmamalı, olumlu/nötr yanıt gelmemiş olmalı (olumsuz yanıtta
+    // otomatik sistem de follow-up'a devam ediyor), 3 aşama tamamlanmamış olmalı,
+    // ve DO_NOT_CONTACT olmamalı.
+    const dncBadge = b.action_badge === "DO_NOT_CONTACT";
+    const canFollowUp =
+      b.status === "sent" &&
+      !b.bounced &&
+      !dncBadge &&
+      stage < 3 &&
+      (!b.replied || b.reply_sentiment === "negative");
+    let followUpBtnHtml;
+    if (dncBadge) {
+      followUpBtnHtml = `<button class="small secondary" disabled title="DO_NOT_CONTACT — Brand Intelligence bu markaya satış/marketplace outreach'ini yasaklıyor.">🚫 Follow-up Engelli</button>`;
+    } else if (stage >= 3) {
+      followUpBtnHtml = `<span class="muted" style="display:block;margin-top:4px;">3 aşama tamamlandı</span>`;
+    } else if (canFollowUp) {
+      followUpBtnHtml = `<button class="small followup-btn" data-id="${b.id}" data-name="${escapeHtml(b.name)}" data-next-stage="${stage + 1}">✉️ ${stage + 1}. Aşama Follow-up Gönder</button>`;
+    } else {
+      followUpBtnHtml = "";
+    }
+
     // Bug fix (görünürlük): bu marka aynı e-posta/domain'i başka bir markayla
     // paylaşıyor olabileceği için gelen bir yanıt burada belirsiz kaldıysa,
     // otomatik not "notes" alanına "[Otomatik uyarı]" ile eklenir (bkz.
@@ -197,7 +220,7 @@ function renderTracking(brands) {
         ${sharedWarning}
         <div>${sentimentSelect(b.id)}</div>
       </td>
-      <td class="muted">${stageText}</td>
+      <td class="muted">${stageText}<br>${followUpBtnHtml}</td>
       <td>${dealStageSelect(b.id, b.deal_stage || "new")}</td>
       <td class="muted">${replyFromText}${b.reply_snippet ? b.reply_snippet.slice(0, 120) + "..." : ""}</td>
       <td class="actions-cell">
@@ -221,6 +244,32 @@ function renderTracking(brands) {
         return `${date} — [${l.status}] ${l.message || ""}`;
       });
       alert(`${btn.dataset.name} gönderim geçmişi:\n\n${lines.join("\n")}`);
+    });
+  });
+
+  document.querySelectorAll(".followup-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const stage = btn.dataset.nextStage;
+      const stageLabel = stage === "1" ? "7 günlük kısa hatırlatma" : stage === "2" ? "15 günlük değer odaklı takip" : "30 günlük son/kapanış maili";
+      if (!confirm(`${btn.dataset.name} markasına ${stage}. aşama follow-up (${stageLabel}) gönderilsin mi?`)) return;
+      btn.disabled = true;
+      btn.textContent = "Gönderiliyor...";
+      try {
+        const res = await fetch(`/api/tracking/${btn.dataset.id}/send-followup`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+          alert("Follow-up gönderilemedi: " + (data.error || "Bilinmeyen hata"));
+          btn.disabled = false;
+          btn.textContent = `✉️ ${stage}. Aşama Follow-up Gönder`;
+          return;
+        }
+        alert(`${btn.dataset.name} markasına ${data.stage}. aşama follow-up gönderildi.\n\nKonu: ${data.subject}`);
+        loadTracking();
+      } catch (e) {
+        alert("Hata: " + e.message);
+        btn.disabled = false;
+        btn.textContent = `✉️ ${stage}. Aşama Follow-up Gönder`;
+      }
     });
   });
 
@@ -446,10 +495,26 @@ function wireRichTextToolbars() {
   });
 }
 
+// Bug fix: app.js'teki AYNI fonksiyonla senkron — eskiden textContent/innerText
+// kullanılıyordu, bu da <p>/<div>/<br>/<li> gibi blok etiketleri arasına satır
+// sonu eklemediği için paragrafların birbirine girmesine (ör. İletişim Formu'na
+// kopyalanan mail metninin karışık görünmesine) neden oluyordu. Artık gerçek
+// mail gönderiminde kullanılan AYNI etiket-bazlı dönüşüm (mailer.js ->
+// htmlToPlainText) burada da kullanılıyor.
 function richTextToPlain(html) {
-  const tmp = document.createElement("div");
-  tmp.innerHTML = html || "";
-  return tmp.textContent || tmp.innerText || "";
+  return (html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 const SPAM_TRIGGER_WORDS = [

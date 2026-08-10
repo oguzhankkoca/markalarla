@@ -35,6 +35,13 @@ let lastRestList = [];
 let selectedFollowupIds = new Set();
 let followupBatchPollTimer = null;
 
+// v76: Takip Listesi sayfalandırması — her sayfada 20 marka, numaralı sayfa
+// butonları (1,2,3,4...). Filtre sekmesi değiştiğinde 1. sayfaya dönülür (bkz.
+// filtre tıklama handler'ı, aşağıda); toplu follow-up/checkbox gibi işlemler
+// sayfayı DEĞİŞTİRMEZ (kullanıcı hangi sayfadaysa orada kalır).
+const TRACKING_PAGE_SIZE = 20;
+let trackingCurrentPage = 1;
+
 function fillTemplateTracking(text, brandName) {
   return (text || "").replace(/{{\s*marka\s*}}/gi, brandName);
 }
@@ -129,16 +136,29 @@ function sentimentSelect(brandId) {
 // backend'de tekrar yapılıyor). En kritik ayrım (kullanıcı talebi): ilk mail
 // bounce olduysa (b.bounced) bu marka KESİNLİKLE uygun değildir — "ilk mail
 // ulaşmadıysa ikincisi nasıl ulaşsın" mantığı.
+function isFollowUpEligibleBase(b) {
+  return b.status === "sent" && !b.bounced && b.action_badge !== "DO_NOT_CONTACT" && (!b.replied || b.reply_sentiment === "negative");
+}
+
 function isFollowUpEligible(b) {
   const stage = b.follow_up_stage || 0;
-  return (
-    b.status === "sent" &&
-    !b.bounced &&
-    b.action_badge !== "DO_NOT_CONTACT" &&
-    stage < 3 &&
-    (!b.replied || b.reply_sentiment === "negative")
-  );
+  return isFollowUpEligibleBase(b) && stage < 3;
 }
+
+// v76: "Sırada bekleyen" 3 kategori — otomatik cron'un (runFullCheck,
+// src/routes/tracking.js FOLLOW_UP_SCHEDULE) kullandığı AYNI eşikler: 7/14/30
+// gün, AYNI alana göre hesaplanıyor (sent_at'tan bugüne — b.days_since_sent,
+// backend zaten hesaplayıp gönderiyor). Kullanıcının açıkça istediği kural:
+// "ilk follow-up atılmayanlar 2./3. kategoriye GEÇEMEZ" — bu yüzden her kategori
+// SADECE tam olarak o aşamadaki (follow_up_stage === beklenen önceki aşama)
+// markaları gösterir, bir öncekini atlayan/erken giren hiçbir marka görünmez.
+function isDueStage(b, stage, afterDays) {
+  const currentStage = b.follow_up_stage || 0;
+  return isFollowUpEligibleBase(b) && currentStage === stage - 1 && b.days_since_sent != null && b.days_since_sent >= afterDays;
+}
+const isDueStage1 = (b) => isDueStage(b, 1, 7);
+const isDueStage2 = (b) => isDueStage(b, 2, 14);
+const isDueStage3 = (b) => isDueStage(b, 3, 30);
 
 function matchesTrackingFilter(b, filter) {
   switch (filter) {
@@ -156,6 +176,12 @@ function matchesTrackingFilter(b, filter) {
       return Boolean(b.document_requested);
     case "followup_eligible":
       return isFollowUpEligible(b);
+    case "due_stage1":
+      return isDueStage1(b);
+    case "due_stage2":
+      return isDueStage2(b);
+    case "due_stage3":
+      return isDueStage3(b);
     default:
       return true;
   }
@@ -170,6 +196,9 @@ function renderTrackingFilterTabs(list) {
     neutral: list.filter((b) => b.replied && (!b.reply_sentiment || b.reply_sentiment === "neutral")).length,
     document: list.filter((b) => b.document_requested).length,
     followup_eligible: list.filter(isFollowUpEligible).length,
+    due_stage1: list.filter(isDueStage1).length,
+    due_stage2: list.filter(isDueStage2).length,
+    due_stage3: list.filter(isDueStage3).length,
   };
   const idMap = {
     all: "trackCountAll",
@@ -179,6 +208,9 @@ function renderTrackingFilterTabs(list) {
     neutral: "trackCountNeutral",
     document: "trackCountDocument",
     followup_eligible: "trackCountFollowupEligible",
+    due_stage1: "trackCountDueStage1",
+    due_stage2: "trackCountDueStage2",
+    due_stage3: "trackCountDueStage3",
   };
   Object.entries(counts).forEach(([key, val]) => {
     const el = document.getElementById(idMap[key]);
@@ -187,6 +219,10 @@ function renderTrackingFilterTabs(list) {
 }
 
 // lastRestList'i mevcut filtreye göre süzüp tabloyu ve sekme sayaçlarını günceller.
+// NOT: burada trackingCurrentPage SIFIRLANMAZ — filtre sekmesine tıklandığında
+// zaten ayrıca 1. sayfaya dönülüyor (bkz. .track-filter-tab click handler);
+// checkbox/not/aşama gibi küçük güncellemeler sonrası çağrıldığında kullanıcı
+// hangi sayfadaysa orada kalsın diye.
 function applyTrackingFilter() {
   renderTrackingFilterTabs(lastRestList);
   const filtered = lastRestList.filter((b) => matchesTrackingFilter(b, currentTrackingFilter));
@@ -194,8 +230,17 @@ function applyTrackingFilter() {
 }
 
 function renderTracking(brands) {
+  // v76: Sayfalandırma — filtrelenmiş listenin tamamı yerine sadece o sayfaya
+  // ait 20 marka render edilir; sayfa numarası listenin boyutuna göre sınırlanır
+  // (örn. filtre değişip liste kısalınca eski sayfa numarasında kalınmasın).
+  const totalPages = Math.max(1, Math.ceil(brands.length / TRACKING_PAGE_SIZE));
+  if (trackingCurrentPage > totalPages) trackingCurrentPage = totalPages;
+  if (trackingCurrentPage < 1) trackingCurrentPage = 1;
+  const pageStart = (trackingCurrentPage - 1) * TRACKING_PAGE_SIZE;
+  const pageItems = brands.slice(pageStart, pageStart + TRACKING_PAGE_SIZE);
+
   trackingBody.innerHTML = "";
-  for (const b of brands) {
+  for (const b of pageItems) {
     const tr = document.createElement("tr");
     const viaText = b.sent_via === "contact_form" ? " (form ile)" : "";
     const sentAtText = b.sent_at
@@ -346,6 +391,52 @@ function renderTracking(brands) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deal_stage: sel.value }),
       });
+    });
+  });
+
+  renderTrackingPaginationBar(brands.length, totalPages);
+}
+
+// v76: Numaralı sayfa butonları (Önceki, 1, 2, 3, 4... Sonraki). Çok sayfa
+// varsa (>7) aradaki numaraları "..." ile kısaltır, ilk/son sayfa ve aktif
+// sayfanın etrafındaki 1'er sayfayı her zaman gösterir.
+function renderTrackingPaginationBar(totalItems, totalPages) {
+  const bar = document.getElementById("trackingPaginationBar");
+  if (!bar) return;
+  if (totalItems === 0 || totalPages <= 1) {
+    bar.innerHTML = "";
+    return;
+  }
+
+  function pageBtn(label, page, opts = {}) {
+    const active = opts.active ? " active" : "";
+    const disabled = opts.disabled ? "disabled" : "";
+    return `<button class="page-btn${active}" data-page="${page}" ${disabled}>${label}</button>`;
+  }
+
+  const cur = trackingCurrentPage;
+  const pages = [];
+  pages.push(pageBtn("‹ Önceki", cur - 1, { disabled: cur <= 1 }));
+
+  const numbers = [];
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === 1 || p === totalPages || Math.abs(p - cur) <= 1) numbers.push(p);
+  }
+  let lastShown = 0;
+  numbers.forEach((p) => {
+    if (lastShown && p - lastShown > 1) pages.push(`<span class="page-ellipsis">...</span>`);
+    pages.push(pageBtn(String(p), p, { active: p === cur }));
+    lastShown = p;
+  });
+
+  pages.push(pageBtn("Sonraki ›", cur + 1, { disabled: cur >= totalPages }));
+
+  bar.innerHTML = `<div class="pagination-info muted">${totalItems} marka — Sayfa ${cur}/${totalPages}</div><div class="pagination-buttons">${pages.join("")}</div>`;
+
+  bar.querySelectorAll(".page-btn:not([disabled])").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      trackingCurrentPage = parseInt(btn.dataset.page, 10);
+      applyTrackingFilter();
     });
   });
 }
@@ -600,6 +691,7 @@ async function loadTracking() {
 document.querySelectorAll(".track-filter-tab").forEach((btn) => {
   btn.addEventListener("click", () => {
     currentTrackingFilter = btn.dataset.filter;
+    trackingCurrentPage = 1; // v76: filtre değişince sayfalandırma 1'e döner
     document.querySelectorAll(".track-filter-tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     applyTrackingFilter();

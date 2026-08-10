@@ -137,6 +137,42 @@ ANTHROPIC_API_KEY ile canlı email üretimi test edilmedi (bu ortamda anahtar yo
 — rol-yapma yöntemiyle (gerçek prompt kurallarına harfiyen uyularak elle yazılan
 örnek emailler) guardrail'den geçirildi, hepsi PASS etti.
 
+## Follow-up "Vadesi Gelen" Filtreleri + Sayfalandırma (v76)
+
+Takip Listesi'ne, hangi markaların hangi follow-up aşamasını beklediğini tek
+tıkla gösteren üç yeni filtre sekmesi eklendi, artı 20 markalık numaralı
+sayfalandırma:
+
+**Üç yeni "vadesi gelen" sekmesi:**
+- **⏰ 1. Follow-up Bekleyen (7+ gün):** ilk mail gönderileli 7+ gün olmuş,
+  henüz hiç follow-up atılmamış markalar.
+- **⏰ 2. Follow-up Bekleyen (14+ gün):** 1. follow-up ZATEN gönderilmiş ve
+  üzerinden 14+ gün geçmiş markalar.
+- **⏰ 3. Follow-up Bekleyen (30+ gün):** 2. follow-up ZATEN gönderilmiş ve
+  üzerinden 30+ gün geçmiş markalar.
+
+Bu üç kategori **sıra atlamaya karşı kilitli**: bir marka 2. sekmede
+görünebilmesi için önce 1. follow-up'ının GERÇEKTEN gönderilmiş olması
+gerekir — 1. follow-up'ı hiç atılmamış bir marka, ne kadar gün geçmiş olursa
+olsun, 2. veya 3. sekmede ASLA görünmez (istenen davranış tam olarak buydu:
+"ilk follow-up atılmayanlar bu kısıma geçemesin"). Eşikler mevcut 7/14/30
+günlük follow-up takvimiyle (`FOLLOW_UP_SCHEDULE`) birebir aynı, panelde
+zaten kullanılan "7. gün / 14. gün / 30. gün" etiketleriyle tutarlı.
+
+**Sayfalandırma:** Takip Listesi tablosu artık tek seferde tüm markaları
+render etmiyor — her sayfada 20 marka, altta numaralı sayfa butonları
+(‹ Önceki, 1, 2, 3, 4... Sonraki). Çok sayfa varsa aradaki numaralar "..."
+ile kısaltılır, ilk/son sayfa ve aktif sayfanın komşuları her zaman görünür.
+Bir filtre sekmesine tıklandığında sayfa otomatik 1'e döner; checkbox işaretleme,
+not/aşama güncelleme gibi küçük işlemler ise mevcut sayfa numarasını değiştirmez.
+
+16 senaryoluk saf-mantık testiyle doğrulandı: aşama-kilitleme (stage 0 bir
+markanın 2./3. sekmede hiç görünmemesi), gün eşiği sınırları, bounce/DNC/
+olumlu-yanıt dışlama, olumsuz-yanıtta dahil etme davranışı — hepsi PASS.
+Sayfalandırma matematiği (dilimleme, sınır aşımı, tek/tam sayfa, "..." mantığı)
+9 ayrı senaryoda ayrıca doğrulandı. Tam regresyon paketi (12/12) değişmeden
+geçmeye devam ediyor.
+
 ## Toplu Follow-up Gönderimi + Bounce Ayrımı (v75)
 
 İki istek üzerine v73'teki tekli manuel follow-up özelliği genişletildi:

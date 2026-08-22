@@ -68,6 +68,95 @@ Eğer şu ana kadar disk eklemeden birden fazla güncelleme yaptıysan, önceki 
 muhtemelen siliniyor olabilir — disk ekledikten sonra Excel'ini tekrar yükleyip baştan
 başlayabilirsin, bundan sonrası kalıcı olacak.
 
+## Bug Fix: Tek Markada Saatlerce Takılı Kalma (v78)
+
+Kullanıcı geri bildirimi: sistem bazen (nadir bir ağ/DNS/AI API takılmasıyla)
+tek bir markada saatlerce asılı kalıp, toplu e-mail arama ya da toplu Brand
+Intelligence araştırması kuyruğundaki DİĞER markalara hiç geçemiyordu.
+
+**Kök neden:** Her HTTP isteğinin kendi timeout'u olsa bile (10-20 saniye
+aralığında), bir markanın araştırması ZİNCİRLEME birden fazla istekten
+oluşuyor (aday domain dene -> AI ile doğrula -> wholesale sayfası dene ->
+...) ve bunlar TEK bir `await` içinde art arda çalışıyordu. Kuyruk
+döngüsü (`processFindAllQueue` / `processIntelQueue`) bu tek `await`i
+bekleyip kalıyordu — üst sınır YOKTU.
+
+**Çözüm:** Yeni `src/services/timeoutGuard.js` — `withResearchTimeout()`
+fonksiyonu, bir markanın araştırma/arama işlemini 10 dakikalık bir üst
+sınırla sarmalıyor (`Promise.race`). Bu sınıra şurada uygulandı:
+- `processFindAllQueue` (toplu e-mail arama kuyruğu) — `findBrandEmail()`
+- Tekli e-mail arama route'u (`POST /api/brands/:id/find-email`)
+- `processIntelQueue` (toplu Brand Intelligence araştırma kuyruğu, Level 2/3/4)
+
+10 dakika dolduğunda o marka **"bulunamadı/araştırılamadı" olarak
+işaretlenip kuyruk otomatik olarak bir sonraki markaya geçiyor** — panel
+artık saatlerce hiçbir ilerleme göstermeyen bir duruma düşmüyor. Zaman
+aşımına uğrayan markanın hata mesajı (`last_error` / Brand
+Intelligence'ta `research_error`) panelde görülebiliyor, böylece hangi
+markanın atlandığı ve neden atlandığı belli oluyor.
+
+**Bilinen sınırlama (bilerek kabul edildi):** JavaScript'te bir Promise'i
+"gerçekten" iptal edip altındaki HTTP isteğini anında kesmenin garantili
+bir yolu yok — zaman aşımına uğrayan iş arka planda teslim olmadan
+çalışmaya devam edebilir ve daha sonra kendi kendine bitip sonucu
+kaydedebilir (bu ZARARSIZ, hatta faydalı). Garanti edilen tek şey:
+kuyruk döngüsü artık ASLA bir markada 10 dakikadan fazla tıkanıp kalmaz.
+
+İki ayrı entegrasyon testiyle doğrulandı (gerçek route kodu çalıştırılarak,
+`emailFinder`/`brandIntelligence` servisleri "sonsuza kadar cevap vermeyen"
+bir marka simüle edecek şekilde stub'landı, timeout süresi teste özel
+kısaltıldı): her iki senaryoda da (1) takılan marka doğru şekilde
+hata/zaman-aşımı olarak işaretlendi, (2) kuyruk saniyeler içinde bir
+sonraki markaya geçip onu da başarıyla işledi — TAKILMADI. `timeoutGuard.js`
+ayrıca 7 birim testiyle (hızlı iş etkilenmiyor, yavaş iş doğru sürede zaman
+aşımına uğruyor, normal hatalar timeout değilmiş gibi aynen fırlıyor) ayrı
+doğrulandı. Tam regresyon paketi (12/12) değişmeden geçmeye devam ediyor.
+
+## Manuel Marka Ekle Sayfası + Marka Silme (v77)
+
+İki ayrı istek üzerine eklendi:
+
+**1. Manuel Marka Ekle.** Sidebar'da yeni bir "✍️ Manuel Marka Ekle" menüsü
+(`/manual.html`) — Excel yükleme/otomatik e-mail arama akışından TAMAMEN
+BAĞIMSIZ, marka adını ve e-postasını doğrudan elle girip ekleyebildiğin bir
+sistem. Marka adı+e-posta girip "Ekle ve Şablon Oluştur"a bastığında:
+- Marka, ayrı bir listede (`source = 'manual'`) kaydedilir — Marka Listesi'nde
+  (Excel'den gelenler) HİÇ görünmez, sadece bu sayfada tutulur.
+- Ayarlar'daki ANA mail şablonu (Marka Listesi'nde kullanılan aynı
+  `main_subject`/`main_body`) otomatik olarak `{{marka}}` yerine girdiğin
+  marka adı konularak dolduruluyor ve düzenlenebilir bir önizleme penceresinde
+  açılıyor — istersen orada değiştirip hemen gönderebilirsin, istersen
+  "İptal" deyip tablodan sonra "Gönder" butonuyla yollarsın.
+- Gönderim, sistemde ZATEN VAR OLAN `/api/brands/:id/send` route'unu kullanır
+  — yani suppression listesi, DO_NOT_CONTACT, aynı e-postaya tekrar yazmama
+  gibi TÜM güvenlik kontrolleri manuel eklenen markalara da AYNEN uygulanır,
+  ayrı/daha zayıf bir "manuel gönderim" yolu icat edilmedi.
+
+**2. Marka Silme.** Eskiden sistemde hiçbir silme yolu yoktu — yanlış eklenen
+ya da artık ilgilenilmeyen bir marka sonsuza dek listede kalıyordu. Artık:
+- Marka Listesi'nde her satırda ve Manuel Marka Ekle sayfasında her satırda
+  "🗑 Sil" butonu var (güçlü bir onay penceresiyle).
+- Marka Listesi'nin araç çubuğuna toplu "🗑 Seçilenleri Sil" butonu eklendi —
+  işaretlediğin markaları tek seferde siler.
+- Silme KALICIDIR: marka satırıyla birlikte gönderim geçmişi (send_log),
+  görevler, Timeline olayları, evrak kayıtları (ve diskteki evrak dosyaları),
+  Brand Intelligence araştırması da temizlenir — hiçbir yerde "hayalet" veri
+  kalmaz.
+- BİLEREK SİLİNMEYEN tek şey: kalıcı "bir daha yazma" (suppression) listesi.
+  Bir marka silinip aynı e-posta ileride tekrar eklenirse (elle ya da yeni
+  bir Excel'de), o adrese yine de mail gitmemesi gerekiyor — suppression bu
+  yüzden marka silmeden tamamen bağımsız, kalıcı bir koruma katmanı.
+
+26 senaryoluk bir testle doğrulandı: manuel ekleme validasyonu (boş isim/
+e-posta, geçersiz e-posta formatı), manuel markanın Marka Listesi'nde
+GÖRÜNMEMESİ, kendi sayfasında görünmesi, silme sonrası ilişkili TÜM
+tabloların (send_log/tasks/brand_events/brand_documents/brand_intelligence)
+temizlenmesi, suppression_list'in silme sırasında DOKUNULMADAN kalması, ve
+en kritik olarak — manuel eklenen bir markaya gönderim yapılırken
+DO_NOT_CONTACT/suppression gibi güvenlik kontrollerinin normal markalardaki
+gibi ÇALIŞTIĞININ doğrulanması (uçtan uca: ekle -> gönder -> sil akışı).
+Tam regresyon paketi (12/12) değişmeden geçmeye devam ediyor.
+
 ## AI Outreach Intelligence Entegrasyonu (v71)
 
 Mevcut Brand Intelligence araştırmasının (Wholesale Research, Marketplace Policy,

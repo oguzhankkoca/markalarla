@@ -12,6 +12,8 @@ const { logEvent } = require("../services/events");
 const { findFuzzyDuplicateGroups } = require("../services/fuzzyDedup");
 const { pickVariant, safeParseArray } = require("../services/mailerHelpers");
 const formFiller = require("../services/formFiller");
+const { deleteBrandDir } = require("../services/documents");
+const { withResearchTimeout } = require("../services/timeoutGuard");
 
 // v71 QA fix: Brand Intelligence (Level 2/3) bir markayı DO_NOT_CONTACT olarak
 // işaretlediyse (Amazon/marketplace politikası ya da kritik bir red flag satışı
@@ -280,10 +282,17 @@ router.get("/api/brands", (req, res) => {
   // çekiyoruz — böylece marka listesindeki "Gönder" butonu, her satır için ayrı
   // bir istek atmadan, DO_NOT_CONTACT markalarda baştan pasif gösterilebiliyor
   // (bkz. public/js/app.js satır ~683 send-btn disabled koşulu).
+  // v77: Manuel Marka Ekle sayfasından elle eklenen markalar ("source = 'manual'")
+  // kasıtlı olarak burada HARİÇ TUTULUYOR — kullanıcı bunları normal Excel/CRM
+  // akışından tamamen ayrı, kendi sayfasında (bkz. GET /api/brands/manual, ve
+  // public/manual.html) yönetmek istedi. Gönderim/takip/yanıt mantığının geri
+  // kalanı (send, tracking, suppression vb.) manuel markalara da AYNEN uygulanır
+  // — sadece bu listeleme ayrımı var.
   const brands = db
     .prepare(
       `SELECT brands.*, brand_intelligence.action_badge AS action_badge
        FROM brands LEFT JOIN brand_intelligence ON brand_intelligence.brand_id = brands.id
+       WHERE brands.source IS NULL OR brands.source != 'manual'
        ORDER BY brands.id`
     )
     .all();
@@ -293,6 +302,66 @@ router.get("/api/brands", (req, res) => {
     batchName: lastBatchRow ? lastBatchRow.batch_name : null,
     batchUploadedAt: lastBatchRow ? lastBatchRow.batch_uploaded_at : null,
   });
+});
+
+// ---------------------------------------------------------------------------
+// v77: Manuel Marka Ekle — kullanıcının Excel/toplu arama akışından bağımsız
+// olarak, marka adını ve e-postasını doğrudan elle girip ekleyebildiği ayrı bir
+// sistem. Website/e-mail ARAMA adımı yok (kullanıcı zaten e-postayı biliyor),
+// bu yüzden satır oluşur oluşmaz status='found' (gönderime hazır) olarak
+// işaretlenir. Gönderim, düzenleme ve takip tarafında NORMAL markalarla AYNI
+// route'lar (POST /api/brands/:id/send, PUT /api/brands/:id, tracking.js vb.)
+// kullanılır — sadece listeleme/oluşturma ayrı.
+// ---------------------------------------------------------------------------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+router.get("/api/brands/manual", (req, res) => {
+  const brands = db
+    .prepare(
+      `SELECT brands.*, brand_intelligence.action_badge AS action_badge
+       FROM brands LEFT JOIN brand_intelligence ON brand_intelligence.brand_id = brands.id
+       WHERE brands.source = 'manual'
+       ORDER BY brands.id DESC`
+    )
+    .all();
+  res.json({ brands });
+});
+
+router.post("/api/brands/manual", (req, res) => {
+  const name = String((req.body && req.body.name) || "").trim();
+  const email = String((req.body && req.body.email) || "").trim();
+  const website = String((req.body && req.body.website) || "").trim();
+  const notes = String((req.body && req.body.notes) || "").trim();
+
+  if (!name) return res.status(400).json({ error: "Marka adı zorunlu." });
+  if (!email) return res.status(400).json({ error: "E-posta adresi zorunlu." });
+  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: "Geçerli bir e-posta adresi gir." });
+
+  // Kalıcı "bir daha yazma" listesinde olan bir adres manuel olarak da eklenebilir
+  // (kullanıcı görsün/bilsin diye engellenmiyor) ama gönderim anında zaten
+  // /api/brands/:id/send route'undaki isSuppressed kontrolüyle engellenecek —
+  // burada sadece bilgilendirici bir uyarı dönüyoruz, ekleme yine de yapılıyor.
+  const suppressedRow = db.prepare("SELECT 1 FROM suppression_list WHERE email = ?").get(email.toLowerCase());
+
+  const batch = "manual-" + new Date().toISOString().slice(0, 10);
+  const insert = db.prepare(
+    `INSERT INTO brands (
+       batch, batch_name, batch_uploaded_at, name, name_normalized, website, email, email_source,
+       confidence, status, source, notes, crm_stage
+     ) VALUES (?, 'Manuel Ekleme', ?, ?, ?, ?, ?, 'manual', 'manual', 'found', 'manual', ?, 'new_lead')`
+  );
+  const info = insert.run(
+    batch,
+    new Date().toISOString(),
+    name,
+    name.toLowerCase(),
+    website || null,
+    email,
+    notes || null
+  );
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(info.lastInsertRowid);
+  logEvent(brand.id, "manual_add", `Manuel olarak eklendi: ${email}`);
+  res.json({ ok: true, brand, suppressedWarning: suppressedRow ? true : false });
 });
 
 // v21'den önce yüklenen dosyalarda (ya da tekrar önleme devreye girmeden önce
@@ -471,11 +540,14 @@ router.post("/api/brands/:id/find-email", async (req, res) => {
   if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
 
   try {
-    const result = await findBrandEmail(brand.name, brand.website, {
-      mainCategory: brand.main_category,
-      subcategory: brand.subcategory,
-      storefrontUrl: brand.storefront_url,
-    });
+    const result = await withResearchTimeout(
+      findBrandEmail(brand.name, brand.website, {
+        mainCategory: brand.main_category,
+        subcategory: brand.subcategory,
+        storefrontUrl: brand.storefront_url,
+      }),
+      `"${brand.name}" için e-mail arama`
+    );
     // "bounced = 0": bu marka daha önce "mail geri döndü" (bounce) olarak
     // işaretlenmiş olabilir — burada elle ya da "Tekrar E-mail Ara" ile yeniden
     // arama yapılıyorsa, eski bounce bayrağını temizliyoruz ki yeni bulunan e-mail
@@ -536,11 +608,18 @@ async function processFindAllQueue() {
     if (!brand) continue;
     findAllJob.currentBrandName = brand.name;
     try {
-      const result = await findBrandEmail(brand.name, brand.website, {
-        mainCategory: brand.main_category,
-        subcategory: brand.subcategory,
-        storefrontUrl: brand.storefront_url,
-      });
+      // Bug fix: sistem bazen tek bir markada (nadir bir ağ/DNS takılmasıyla)
+      // saatlerce asılı kalıp kuyruktaki diğer markalara hiç geçemiyordu. Artık
+      // bu markanın arama süresi 10 dakikayla sınırlı — süre dolarsa bu marka
+      // "bulunamadı" sayılıp bir sonraki markaya geçilir (bkz. timeoutGuard.js).
+      const result = await withResearchTimeout(
+        findBrandEmail(brand.name, brand.website, {
+          mainCategory: brand.main_category,
+          subcategory: brand.subcategory,
+          storefrontUrl: brand.storefront_url,
+        }),
+        `"${brand.name}" için e-mail arama`
+      );
       const { status: resolvedStatus, crossBrandDuplicate, note } = resolveStatusAndDuplicateFlag(
         result.email,
         brand.id
@@ -663,6 +742,31 @@ router.put("/api/brands/:id", (req, res) => {
     notes !== undefined ? notes : brand.notes,
     brand.id
   );
+  res.json({ ok: true });
+});
+
+// v77: Bir markayı kalıcı olarak sil. Kullanıcı elle eklediği/yüklediği bir
+// markayı tamamen kaldırmak istediğinde (yanlış girilmiş, artık ilgilenmiyor
+// vb.) — eskiden bu MÜMKÜN DEĞİLDİ, sistemde hiçbir silme route'u yoktu.
+// Bilerek silinmeyen TEK şey suppression_list (kalıcı "bir daha yazma"
+// listesi): bir marka silinip aynı e-posta ileride tekrar eklenirse (elle ya
+// da yeni bir Excel'de), o adrese ASLA yeniden mail gitmemesi gerekiyor —
+// suppression tamamen bağımsız ve kalıcı bir koruma katmanı olarak kalır.
+router.delete("/api/brands/:id", (req, res) => {
+  const brand = db.prepare("SELECT * FROM brands WHERE id = ?").get(req.params.id);
+  if (!brand) return res.status(404).json({ error: "Marka bulunamadı." });
+
+  const deleteTx = db.transaction((brandId) => {
+    db.prepare("DELETE FROM send_log WHERE brand_id = ?").run(brandId);
+    db.prepare("DELETE FROM tasks WHERE brand_id = ?").run(brandId);
+    db.prepare("DELETE FROM brand_events WHERE brand_id = ?").run(brandId);
+    db.prepare("DELETE FROM brand_documents WHERE brand_id = ?").run(brandId);
+    db.prepare("DELETE FROM brand_intelligence WHERE brand_id = ?").run(brandId);
+    db.prepare("DELETE FROM brands WHERE id = ?").run(brandId);
+  });
+  deleteTx(brand.id);
+  deleteBrandDir(brand.id); // diskteki evrak dosyaları (varsa)
+
   res.json({ ok: true });
 });
 

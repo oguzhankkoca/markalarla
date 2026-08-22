@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8" />
-<title>Özet / Analitik</title>
+<title>Manuel Marka Ekle</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -14,7 +14,7 @@
       <div class="sidebar-logo">🚀 <span class="logo-text">Neofa Outreach</span></div>
       <div class="nav-section-label">Operasyon</div>
       <nav>
-        <a href="/analytics.html" class="nav-link active">
+        <a href="/analytics.html" class="nav-link">
           <span class="nav-icon">📊</span>
           <span class="nav-text">
             <span class="nav-title">Dashboard</span>
@@ -35,7 +35,7 @@
             <span class="nav-subtitle">Excel yükle & e-posta bul</span>
           </span>
         </a>
-        <a href="/manual.html" class="nav-link">
+        <a href="/manual.html" class="nav-link active">
           <span class="nav-icon">✍️</span>
           <span class="nav-text">
             <span class="nav-title">Manuel Marka Ekle</span>
@@ -82,75 +82,79 @@
 
         <div class="page-header">
           <div>
-            <h1>Özet / Analitik</h1>
-            <p>Kampanyanın genel performansına bir bakış.</p>
+            <h1>Manuel Marka Ekle</h1>
+            <p>
+              Excel yüklemeden/otomatik e-mail aramadan bağımsız — marka adını ve e-postasını
+              doğrudan elle gir, sistem Ayarlar'daki ana mail şablonunu otomatik doldursun,
+              düzenleyip tek tıkla gönder. Buraya eklenen markalar Marka Listesi'nde
+              GÖRÜNMEZ, sadece bu sayfada tutulur.
+            </p>
           </div>
         </div>
 
-        <div class="toolbar" style="margin-bottom:16px;">
-          <a href="/api/reports/excel" class="secondary" style="text-decoration:none; padding:8px 14px; border-radius:6px; display:inline-block;">📊 Excel Raporu İndir</a>
-          <a href="/api/reports/pdf" class="secondary" style="text-decoration:none; padding:8px 14px; border-radius:6px; display:inline-block;">📄 PDF Raporu İndir</a>
-        </div>
-
-        <div class="card" id="todayPanelCard">
-          <h2>✅ Bugün Yapılacaklar</h2>
-          <div id="todayPanel" class="muted">Yükleniyor...</div>
-        </div>
-
         <div class="card">
-          <h2>📈 Genel Durum</h2>
-          <div class="stat-grid" id="mainStats"></div>
+          <h2>➕ Yeni Manuel Marka</h2>
+          <div class="toolbar" style="flex-wrap:wrap;">
+            <input type="text" id="manualNameInput" placeholder="Marka adı *" style="min-width:220px;" />
+            <input type="email" id="manualEmailInput" placeholder="E-posta *" style="min-width:220px;" />
+            <input type="text" id="manualWebsiteInput" placeholder="Website (opsiyonel)" style="min-width:200px;" />
+            <input type="text" id="manualNotesInput" placeholder="Not (opsiyonel)" style="min-width:200px;" />
+            <button id="manualAddBtn">Ekle ve Şablon Oluştur</button>
+          </div>
+          <div id="manualAddError" class="error-box" style="display:none;"></div>
         </div>
 
-        <div class="card">
-          <h2>🎯 Oranlar</h2>
-          <div class="stat-grid" id="rateStats"></div>
-        </div>
-
-        <div class="card">
-          <h2>🤝 Anlaşma Aşamaları (gönderilenler arasında)</h2>
-          <div class="stat-grid" id="dealStats"></div>
-        </div>
-
-        <!-- v68: Brand Intelligence + Growth Audit — madde 29, basit sayaçlar
-             (karmaşık bir ML/tahmin sistemi YOK, sadece ham metrikler). -->
-        <div class="card">
-          <h2>🎯 Growth Metrics (Brand Intelligence)</h2>
-          <div class="stat-grid" id="growthMetricsStats"></div>
-        </div>
-
-        <!-- v60: Gelişmiş analiz paneli (grafikler) -->
-        <div class="card">
-          <h2>📉 Son 30 Gün: Gönderim / Yanıt / Olumlu</h2>
-          <canvas id="timeseriesChart" height="90"></canvas>
-        </div>
-
-        <div class="card">
-          <h2>🧭 CRM Pipeline Hunisi</h2>
-          <canvas id="pipelineFunnelChart" height="110"></canvas>
-        </div>
-
-        <div class="card" id="abTestCard" style="display:none;">
-          <h2>🧪 A/B Test: Konu Satırı Performansı</h2>
-          <canvas id="abTestChart" height="100"></canvas>
-        </div>
-
-        <div class="card">
-          <h2>🛒 Amazon Analizi (portföy geneli)</h2>
-          <div class="stat-grid" id="amazonStats"></div>
-          <h3 style="margin-top:16px; font-size:14px;">En Değerli 10 Kategori (tahmini toplam aylık ciro)</h3>
-          <table class="simple-table" id="amazonCategoryTable">
-            <thead><tr><th>Kategori</th><th>Marka Sayısı</th><th>Toplam Tahmini Ciro</th></tr></thead>
-            <tbody></tbody>
+        <div class="card card-wide">
+          <h2>✍️ Manuel Eklenen Markalar <span class="filter-count" id="manualCount">0</span></h2>
+          <div style="overflow-x:auto;">
+          <table id="manualTable">
+            <thead>
+              <tr>
+                <th>Marka</th>
+                <th>E-posta</th>
+                <th>Website</th>
+                <th>Not</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="manualBody"></tbody>
           </table>
+          </div>
+          <p class="muted" id="manualEmptyState" style="display:none; margin-top:10px;">
+            Henüz manuel eklenen marka yok. Yukarıdaki formu doldurup "Ekle ve Şablon Oluştur"a bas.
+          </p>
         </div>
 
       </div>
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
-  <script src="/js/analytics.js"></script>
+  <div id="manualPreviewOverlay" class="overlay" style="display:none;">
+    <div class="modal">
+      <h2 id="manualPreviewTitle">Mail Önizleme</h2>
+      <p class="muted">Göndermeden önce bu markaya özel metni düzenleyebilirsin.</p>
+      <label class="muted">Kime</label>
+      <input type="text" id="manualPreviewTo" disabled />
+      <label class="muted">Konu</label>
+      <input type="text" id="manualPreviewSubject" />
+      <label class="muted">İçerik</label>
+      <div class="rte-toolbar" data-target="manualPreviewBody">
+        <button type="button" class="rte-btn" data-cmd="bold"><b>K</b></button>
+        <button type="button" class="rte-btn" data-cmd="italic"><i>İ</i></button>
+        <button type="button" class="rte-btn" data-cmd="underline"><u>A</u></button>
+        <button type="button" class="rte-btn" data-cmd="insertUnorderedList">• Liste</button>
+        <button type="button" class="rte-btn" data-cmd="removeFormat">Temizle</button>
+      </div>
+      <div id="manualPreviewBody" class="rich-editor" contenteditable="true"></div>
+      <div class="toolbar">
+        <button id="manualPreviewSendBtn">Gönder</button>
+        <button id="manualPreviewCancelBtn" class="secondary">İptal</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/manual.js"></script>
   <script src="/js/navBadge.js"></script>
   <script src="/js/jobStatusToast.js"></script>
 </body>

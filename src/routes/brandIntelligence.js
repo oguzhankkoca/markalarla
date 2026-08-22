@@ -6,6 +6,8 @@ const express = require("express");
 const db = require("../db");
 const intelSvc = require("../services/brandIntelligence");
 const { isConfigured: aiConfigured } = require("../services/ai");
+const { withResearchTimeout } = require("../services/timeoutGuard");
+const { logEvent } = require("../services/events");
 
 const router = express.Router();
 
@@ -129,11 +131,33 @@ async function processIntelQueue() {
     if (!brand) continue;
     intelJob.currentBrandName = brand.name;
     try {
-      if (intelJob.level === 2) await intelSvc.runLevel2Screen(brand);
-      else if (intelJob.level === 4) await intelSvc.runLevel4GrowthAudit(brand);
-      else await intelSvc.runLevel3DeepResearch(brand);
+      // Bug fix: araştırma bazen (nadir bir ağ/AI API takılmasıyla) tek bir
+      // markada saatlerce asılı kalıp kuyruktaki diğer markalara hiç
+      // geçemiyordu. Artık marka başına araştırma süresi 10 dakikayla sınırlı
+      // — süre dolarsa bu marka atlanıp bir sonraki markaya geçilir (bkz.
+      // timeoutGuard.js). Zaman aşımına uğrayan iş arka planda kendi kendine
+      // bitip sonucu daha sonra kaydedebilir; garanti edilen tek şey kuyruğun
+      // asla 10 dakikadan fazla tıkanıp kalmamasıdır.
+      const label = `"${brand.name}" için Level ${intelJob.level} araştırması`;
+      if (intelJob.level === 2) await withResearchTimeout(intelSvc.runLevel2Screen(brand), label);
+      else if (intelJob.level === 4) await withResearchTimeout(intelSvc.runLevel4GrowthAudit(brand), label);
+      else await withResearchTimeout(intelSvc.runLevel3DeepResearch(brand), label);
     } catch (e) {
       intelJob.errors.push(`${brand.name}: ${e.message}`);
+      if (e.isTimeout) {
+        try {
+          // Zaman aşımı, brand_intelligence satırı henüz OLUŞMADAN (araştırma
+          // ilk adımdayken) da gerçekleşmiş olabilir — bu yüzden UPDATE değil,
+          // satır yoksa oluşturan bir upsert kullanıyoruz (brand_id PRIMARY KEY).
+          db.prepare(
+            `INSERT INTO brand_intelligence (brand_id, research_error, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(brand_id) DO UPDATE SET research_error = excluded.research_error, updated_at = CURRENT_TIMESTAMP`
+          ).run(brand.id, e.message);
+          logEvent(brand.id, "intel_timeout", e.message);
+        } catch (dbErr) {
+          // research_error yazılamasa bile kuyruk bir sonraki markaya geçmeye devam etsin
+        }
+      }
     }
     intelJob.processedCount++;
   }

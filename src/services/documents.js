@@ -40,6 +40,18 @@ function deleteDocumentFile(brandId, storedFilename) {
   }
 }
 
+// v77: Bir marka tamamen silindiğinde (bkz. routes/brands.js DELETE /api/brands/:id),
+// o markaya ait TÜM evrak klasörünü (ve içindeki dosyaları) diskten kaldırır.
+// Marka zaten hiç evrak yüklemediyse klasör hiç oluşmamış olabilir — sorun değil.
+function deleteBrandDir(brandId) {
+  const dir = path.join(documentsDir, String(brandId));
+  try {
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    // dosyalar silinemese bile DB kaydı silinmeye devam etsin — kritik değil
+  }
+}
+
 const DOCUMENT_TYPES = [
   "Resale Certificate",
   "W-9",
@@ -49,4 +61,4 @@ const DOCUMENT_TYPES = [
   "Diğer",
 ];
 
-module.exports = { saveDocumentFile, documentFilePath, deleteDocumentFile, DOCUMENT_TYPES };
+module.exports = { saveDocumentFile, documentFilePath, deleteDocumentFile, deleteBrandDir, DOCUMENT_TYPES };

@@ -715,6 +715,7 @@ function renderBrands() {
               : ""
           }
           <button class="small secondary detail-btn" data-id="${b.id}" title="Arama adımları detayı">Detay</button>
+          <button class="small secondary delete-brand-btn" data-id="${b.id}" data-name="${b.name.replace(/"/g, "&quot;")}" title="Bu markayı kalıcı olarak sil">🗑 Sil</button>
         </div>
       </td>
     `;
@@ -819,6 +820,23 @@ function attachRowEvents() {
     btn.addEventListener("click", () => {
       const brand = brands.find((b) => String(b.id) === btn.dataset.id);
       if (brand) openBrandPanel(brand);
+    });
+  });
+
+  // v77: Marka silme — eskiden sistemde HİÇBİR silme yolu yoktu, yanlış/istenmeyen
+  // bir marka eklendiğinde kullanıcı onu sonsuza dek listede taşımak zorundaydı.
+  // Silme kalıcıdır (send_log/tasks/timeline/evrak/brand_intelligence kayıtları
+  // da backend'de birlikte temizlenir — bkz. DELETE /api/brands/:id) — bu yüzden
+  // güçlü bir confirm() ile onay isteniyor.
+  document.querySelectorAll(".delete-brand-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm(`"${btn.dataset.name}" markasını kalıcı olarak silmek istediğine emin misin?\n\nBu işlem geri alınamaz — gönderim geçmişi, notlar, görevler ve Brand Intelligence verisi de silinir.`)) return;
+      const res = await fetch(`/api/brands/${btn.dataset.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || "Silinemedi.");
+      brands = brands.filter((b) => String(b.id) !== btn.dataset.id);
+      selectedIds.delete(btn.dataset.id);
+      renderBrands();
     });
   });
 
@@ -1746,6 +1764,38 @@ document.getElementById("dedupeBtn").addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = "Tekrarlananları Birleştir";
+  }
+});
+
+// v77: İşaretlenen (checkbox) markaları toplu olarak kalıcı siler. Backend'de
+// ayrı bir "toplu silme" route'u YOK — her marka için tek tek DELETE
+// /api/brands/:id çağrılır (silme işlemi anlık/local bir işlem, gönderim gibi
+// hız sınırlamasına/kuyruklamaya ihtiyaç duymuyor).
+document.getElementById("deleteSelectedBtn").addEventListener("click", async () => {
+  if (selectedIds.size === 0) return alert("Önce silmek istediğin markaları işaretle.");
+  if (!confirm(`${selectedIds.size} markayı kalıcı olarak silmek istediğine emin misin?\n\nBu işlem geri alınamaz — gönderim geçmişi, notlar, görevler ve Brand Intelligence verisi de silinir.`)) return;
+
+  const btn = document.getElementById("deleteSelectedBtn");
+  btn.disabled = true;
+  btn.textContent = "Siliniyor...";
+  try {
+    const ids = Array.from(selectedIds);
+    const results = await Promise.all(
+      ids.map((id) => fetch(`/api/brands/${id}`, { method: "DELETE" }).then((r) => r.json().then((data) => ({ id, ok: r.ok, error: data.error }))))
+    );
+    const failed = results.filter((r) => !r.ok);
+    const succeededIds = new Set(results.filter((r) => r.ok).map((r) => r.id));
+    brands = brands.filter((b) => !succeededIds.has(String(b.id)));
+    succeededIds.forEach((id) => selectedIds.delete(id));
+    renderBrands();
+    if (failed.length > 0) {
+      alert(`${succeededIds.size} marka silindi, ${failed.length} tanesi silinemedi:\n${failed.map((f) => f.error).join("\n")}`);
+    }
+  } catch (e) {
+    alert("Hata: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🗑 Seçilenleri Sil";
   }
 });
 

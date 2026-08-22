@@ -556,5 +556,14 @@ db.prepare(
   "INSERT OR IGNORE INTO growth_metrics (id, wholesale_applications, approved_brands, first_orders, first_po_total_value) VALUES (1, 0, 0, 0, 0)"
 ).run();
 
+// v77: Manuel Marka Ekle sayfası — kullanıcının Excel akışından TAMAMEN AYRI
+// olarak elle (marka adı + e-posta) eklediği markaları ayırt etmek için. Var
+// olan tüm kayıtlar (Excel/CSV yüklemesiyle gelenler) otomatik olarak 'import'
+// değerini alır (ALTER TABLE ... DEFAULT burada BİLEREK kullanıldı — crm_stage'in
+// aksine burada eski kayıtları NULL bırakıp ayrıca backfill yapmaya gerek yok,
+// "import" zaten doğru/nihai değer). Yeni manuel eklemeler routes/brands.js'te
+// elle 'manual' olarak yazılır.
+ensureColumn("brands", "source", "TEXT DEFAULT 'import'");
+
 module.exports = db;
 module.exports.dbFilePath = dbFilePath;

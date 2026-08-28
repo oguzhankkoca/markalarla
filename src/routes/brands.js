@@ -776,9 +776,14 @@ router.delete("/api/brands/:id", (req, res) => {
 // e-maili düzeltip tekrar gönderdiğinde eski "bounced = 1" bayrağı kalıcı olarak
 // orada kalır ve sistem bu markayı bir daha ASLA yanıt/bounce taramasına almaz
 // (runFullCheck'teki "WHERE ... bounced = 0" filtresine sonsuza dek takılır).
+// v79 bug fix: follow_up_stage sıfırlanırken o markanın ESKİ follow-up
+// tarihleri de (followup1/2/3_sent_at) temizlenmeli — yoksa yeni gönderim
+// döngüsünde henüz hiçbir follow-up atılmamışken panelde önceki döngüden
+// kalma eski bir tarih görünürdü (bkz. routes/tracking.js'teki AYNI sabit).
 const RESET_TRACKING_ON_SEND_SQL = `
   bounced = 0, replied = 0, reply_sentiment = NULL, reply_snippet = NULL, reply_from = NULL,
-  notified = 0, follow_up_stage = 0, last_follow_up_at = NULL, last_checked_at = NULL
+  notified = 0, follow_up_stage = 0, last_follow_up_at = NULL, last_checked_at = NULL,
+  followup1_sent_at = NULL, followup2_sent_at = NULL, followup3_sent_at = NULL
 `;
 
 // Bir markaya, sistemin mailer'ı yerine iletişim formu üzerinden elle mail

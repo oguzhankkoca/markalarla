@@ -129,6 +129,43 @@ function sentimentSelect(brandId) {
     </select>`;
 }
 
+// v79 bug fix: Takip Aşaması hücresinde eskiden sadece "X/3 gönderildi" gibi
+// belirsiz bir sayaç vardı — 2. follow-up gidince 1.'sinin tarihi kayboluyordu
+// (DB'de tek bir ortak "son follow-up" tarihi tutulduğu için). Artık her
+// aşamanın KENDİ tarihi (b.followup1/2/3_sent_at, backend'den geliyor) ayrı
+// ayrı, net bir zaman çizelgesi olarak gösteriliyor: "İlk Mail -> 1. Follow-up
+// -> 2. Follow-up -> 3. Follow-up", her biri tarihi + kaç gün önce olduğuyla.
+//
+// Geriye dönük uyumluluk: bu özellik eklenmeden ÖNCE gönderilmiş follow-up'lar
+// için kesin tarih DB'de yok (o zaman bu kolonlar henüz yoktu) — böyle bir
+// durumda follow_up_stage sayacına bakılıp "gönderildi ama eski kayıt, tarihi
+// yok" diye AÇIKÇA belirtiliyor; asla "henüz atılmadı" gibi YANLIŞ bir bilgi
+// gösterilmiyor.
+function formatFollowupStageLine(b, stageNum, sentAt, daysSince) {
+  if (sentAt) {
+    const dateStr = new Date(sentAt).toLocaleDateString("tr-TR");
+    return `✅ ${stageNum}. Follow-up: ${dateStr} (${daysSince} gün önce)`;
+  }
+  const currentStage = b.follow_up_stage || 0;
+  if (currentStage >= stageNum) {
+    return `✅ ${stageNum}. Follow-up: gönderildi (eski kayıt — tarih bilgisi yok)`;
+  }
+  return `⬜ ${stageNum}. Follow-up: henüz atılmadı`;
+}
+
+function buildFollowupTimelineHtml(b) {
+  const initialLine = b.sent_at
+    ? `📧 İlk Mail: ${new Date(b.sent_at).toLocaleDateString("tr-TR")} (${b.days_since_sent} gün önce)`
+    : "📧 İlk Mail: gönderilmedi";
+  const lines = [
+    initialLine,
+    formatFollowupStageLine(b, 1, b.followup1_sent_at, b.days_since_followup1),
+    formatFollowupStageLine(b, 2, b.followup2_sent_at, b.days_since_followup2),
+    formatFollowupStageLine(b, 3, b.followup3_sent_at, b.days_since_followup3),
+  ];
+  return `<div class="followup-timeline">${lines.map((l) => `<div>${l}</div>`).join("")}</div>`;
+}
+
 // Takip Listesi filtre sekmeleri: bir markanın hangi kategoriye girdiğini belirler.
 // v75: Bir markanın follow-up gönderimi için GERÇEKTEN uygun olup olmadığını
 // belirler — backend'deki sendFollowUpForBrand() ile AYNI kurallar (DO_NOT_CONTACT,
@@ -247,7 +284,12 @@ function renderTracking(brands) {
       ? `${new Date(b.sent_at).toLocaleDateString("tr-TR")} (${b.days_since_sent} gün önce)${viaText}`
       : "-";
     const stage = b.follow_up_stage || 0;
-    const stageText = stage > 0 ? `${stage}/3 gönderildi` : "Henüz gönderilmedi";
+    // v79 bug fix: eskiden burada sadece "X/3 gönderildi" gibi belirsiz bir sayaç
+    // vardı — hangi aşamanın NE ZAMAN gönderildiği hiçbir yerde görünmüyordu (2.
+    // follow-up gidince 1.'sinin tarihi de kayboluyordu, çünkü DB'de tek bir ortak
+    // "son follow-up" tarihi tutuluyordu). Artık her aşamanın KENDİ tarihi
+    // (followup1/2/3_sent_at, bkz. backend v79) ayrı ayrı, açıkça gösteriliyor.
+    const stageText = buildFollowupTimelineHtml(b);
 
     // Manuel "Follow-up Gönder" butonu: sadece gerçekten uygunsa gösterilir —
     // otomatik akışın (runFullCheck) kullandığı AYNI kurallar (bkz. isFollowUpEligible,

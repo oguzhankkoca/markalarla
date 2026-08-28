@@ -68,6 +68,48 @@ Eğer şu ana kadar disk eklemeden birden fazla güncelleme yaptıysan, önceki 
 muhtemelen siliniyor olabilir — disk ekledikten sonra Excel'ini tekrar yükleyip baştan
 başlayabilirsin, bundan sonrası kalıcı olacak.
 
+## Bug Fix: Follow-up Aşamaları Doğru Gösterilmiyordu (v79)
+
+Kullanıcı geri bildirimi: "2. 3. follow-up'ları doğru düzgün göstermiyor,
+bazen ilkini de" — sistem follow-up'ları ne zaman/kime attığını net takip
+edemiyordu.
+
+**Kök neden (doğrulandı):** Veritabanında her follow-up aşaması için AYRI bir
+tarih YOKTU — sadece TEK bir ortak `last_follow_up_at`/`follow_up_sent_at`
+kolonu vardı. 2. follow-up gönderilince bu kolon o tarihle ÜZERİNE YAZILIYOR,
+yani 1. follow-up'ın ne zaman gittiği bilgisi SİLİNMİŞ oluyordu — sayaç
+(`follow_up_stage`) doğru ilerlese de "hangi tarihte" bilgisi kayboluyordu.
+Panelde de bu veriden hiç yararlanılmıyordu; sadece belirsiz bir "2/3
+gönderildi" sayacı vardı, hiçbir tarih gösterilmiyordu.
+
+**Çözüm:**
+- Her aşama için ayrı, ASLA üzerine yazılmayan kalıcı tarih kolonu:
+  `followup1_sent_at`, `followup2_sent_at`, `followup3_sent_at`. Otomatik
+  cron, tekli manuel gönderim ve toplu follow-up — üçü de AYNI kolonlara,
+  sadece kendi aşamalarınınkine yazıyor.
+- Takip Listesi'ndeki "Takip Aşaması" hücresi artık belirsiz bir sayaç değil,
+  tam bir zaman çizelgesi: **📧 İlk Mail -> ✅ 1. Follow-up -> ✅ 2. Follow-up
+  -> ⬜ 3. Follow-up**, her biri tarihi ve "X gün önce" bilgisiyle.
+- Bir marka yeniden gönderildiğinde (resend/soğuk marka yeniden ısıtma),
+  önceki döngüden kalma follow-up tarihleri de artık DOĞRU şekilde
+  temizleniyor — eskiden sadece sayaç sıfırlanıyor, eski tarihler yeni
+  döngüye "hayalet" olarak taşınabiliyordu.
+- Geriye dönük uyumluluk: bu özellik eklenmeden ÖNCE gönderilmiş follow-up'lar
+  için kesin tarih yok (kolonlar o zaman yoktu) — panel bu durumda "✅ N.
+  Follow-up: gönderildi (eski kayıt — tarih bilgisi yok)" gösteriyor, ASLA
+  "henüz atılmadı" gibi YANLIŞ bir bilgi vermiyor.
+- Excel dışa aktarmaya (`/api/tracking/export`) da 3 yeni sütun eklendi: "1./2./3.
+  Follow-up Tarihi".
+
+25 senaryoluk testle doğrulandı (gerçek route kodu çalıştırılarak): sıralı
+1->2->3 follow-up gönderiminde her aşamanın tarihinin BAĞIMSIZ kaydedildiği
+ve sonraki aşamaların ÖNCEKİNİ SİLMEDİĞİ, takvim tamamlandıktan sonra 4.
+denemenin reddedildiği, ilk maili yeniden gönderince follow-up tarihlerinin
+doğru temizlendiği, toplu follow-up kuyruğunun da aynı doğru kolonlara
+yazdığı, ve panel tarafında hem yeni-kayıt hem eski-kayıt (geriye dönük
+uyumluluk) senaryolarının doğru metinle gösterildiği. Tam regresyon paketi
+(12/12) değişmeden geçmeye devam ediyor.
+
 ## Bug Fix: Tek Markada Saatlerce Takılı Kalma (v78)
 
 Kullanıcı geri bildirimi: sistem bazen (nadir bir ağ/DNS/AI API takılmasıyla)

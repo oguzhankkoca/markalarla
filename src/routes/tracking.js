@@ -46,10 +46,23 @@ const CIRCUIT_BREAKER_THRESHOLD = 0.3; // %30 ve üzeri bounce oranı
 // brands.js'teki aynı isimli sabitle birebir aynı — bir marka yeniden "gönderilebilir"
 // duruma alındığında (burada: soğuk marka yeniden ısıtma), önceki döngüden kalma takip
 // alanlarının (bounce, yanıt, follow-up aşaması vb.) sıfırlanması için.
+// v79 bug fix: follow_up_stage sıfırlanırken (yeni bir gönderim döngüsü
+// başladığında) o markanın ESKİ follow-up tarihleri de (followup1/2/3_sent_at)
+// TEMİZLENMELİ — yoksa yeni döngüde henüz hiçbir follow-up atılmamışken panelde
+// önceki döngüden kalma eski bir tarih görünür, bu da "follow-up'lar yanlış
+// gösteriliyor" şikayetinin bir başka kaynağı olurdu.
 const RESET_TRACKING_ON_SEND_SQL = `
   bounced = 0, replied = 0, reply_sentiment = NULL, reply_snippet = NULL, reply_from = NULL,
-  notified = 0, follow_up_stage = 0, last_follow_up_at = NULL, last_checked_at = NULL
+  notified = 0, follow_up_stage = 0, last_follow_up_at = NULL, last_checked_at = NULL,
+  followup1_sent_at = NULL, followup2_sent_at = NULL, followup3_sent_at = NULL
 `;
+
+// Her follow-up aşamasının KENDİ, asla üzerine yazılmayan tarih kolonu — bkz.
+// db.js'teki v79 açıklaması. SQL'de kolon adı parametre olarak bağlanamaz, bu
+// yüzden nextStage (her zaman 1/2/3 olacak şekilde yukarıda doğrulanmış) bu
+// sabit whitelist üzerinden kolon adına çevriliyor; asla doğrudan kullanıcı
+// girdisinden gelen bir değer SQL'e enjekte edilmiyor.
+const FOLLOWUP_STAGE_DATE_COLUMN = { 1: "followup1_sent_at", 2: "followup2_sent_at", 3: "followup3_sent_at" };
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -580,9 +593,10 @@ async function runFullCheck() {
           // Bug fix: follow-up mailinin Message-ID'sini de günceliyoruz — alıcı
           // en son gönderilen (follow-up) maile yanıt verirse, thread eşleştirmesi
           // hâlâ bu markaya kesin olarak bağlansın (bkz. inboxChecker.js).
+          const dateCol = FOLLOWUP_STAGE_DATE_COLUMN[nextStep.stage];
           db.prepare(
             `UPDATE brands SET follow_up_stage = ?, last_follow_up_at = CURRENT_TIMESTAMP,
-             follow_up_sent_at = CURRENT_TIMESTAMP, sent_message_id = ? WHERE id = ?`
+             follow_up_sent_at = CURRENT_TIMESTAMP, ${dateCol} = CURRENT_TIMESTAMP, sent_message_id = ? WHERE id = ?`
           ).run(nextStep.stage, (followUpInfo && followUpInfo.messageId) || brand.sent_message_id || null, brand.id);
           db.prepare(
             "INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)"
@@ -621,9 +635,16 @@ router.get("/api/tracking", (req, res) => {
     )
     .all();
 
+  // v79 bug fix: her follow-up aşamasının KENDİ tarihinden (followup1/2/3_sent_at)
+  // "kaç gün önce" bilgisini de hesaplayıp gönderiyoruz — panel artık tek bir
+  // belirsiz sayaç yerine "1. Follow-up: 12 Ağu (5 gün önce)" gibi net, aşama
+  // bazlı bir zaman çizelgesi gösterebiliyor.
   const enriched = brands.map((b) => ({
     ...b,
     days_since_sent: daysAgo(b.sent_at),
+    days_since_followup1: daysAgo(b.followup1_sent_at),
+    days_since_followup2: daysAgo(b.followup2_sent_at),
+    days_since_followup3: daysAgo(b.followup3_sent_at),
   }));
 
   res.json({ brands: enriched, dealStages: DEAL_STAGES });
@@ -723,9 +744,10 @@ async function sendFollowUpForBrand(brand) {
 
     const sendInfo = await mailer.sendMail({ to: brand.email, subject, body, trackOpenBrandId: brand.id });
 
+    const dateCol = FOLLOWUP_STAGE_DATE_COLUMN[nextStage];
     db.prepare(
       `UPDATE brands SET follow_up_stage = ?, last_follow_up_at = CURRENT_TIMESTAMP,
-       follow_up_sent_at = CURRENT_TIMESTAMP, sent_message_id = ? WHERE id = ?`
+       follow_up_sent_at = CURRENT_TIMESTAMP, ${dateCol} = CURRENT_TIMESTAMP, sent_message_id = ? WHERE id = ?`
     ).run(nextStage, (sendInfo && sendInfo.messageId) || brand.sent_message_id || null, brand.id);
     db.prepare("INSERT INTO send_log (brand_id, status, message) VALUES (?, 'sent', ?)").run(
       brand.id,
@@ -922,6 +944,9 @@ router.get("/api/tracking/export", (req, res) => {
     "Yanıt Tonu": b.reply_sentiment || "",
     "Yanıt Özeti": b.reply_snippet || "",
     "Takip Aşaması": b.follow_up_stage || 0,
+    "1. Follow-up Tarihi": b.followup1_sent_at || "",
+    "2. Follow-up Tarihi": b.followup2_sent_at || "",
+    "3. Follow-up Tarihi": b.followup3_sent_at || "",
     "Anlaşma Aşaması": b.deal_stage || "new",
     "Geri Döndü mü": b.bounced ? "Evet" : "Hayır",
     "Belge İstendi mi": b.document_requested ? "Evet" : "Hayır",

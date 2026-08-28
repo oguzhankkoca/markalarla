@@ -565,5 +565,16 @@ db.prepare(
 // elle 'manual' olarak yazılır.
 ensureColumn("brands", "source", "TEXT DEFAULT 'import'");
 
+// v79 bug fix: follow-up gösterimi düzeltmesi. ESKİDEN sadece TEK bir
+// last_follow_up_at/follow_up_sent_at kolonu vardı — 2. follow-up gönderilince
+// bu kolon ÜZERİNE YAZILIYOR, yani 1. follow-up'ın ne zaman gittiği bilgisi
+// SİLİNMİŞ oluyordu (follow_up_stage sayacı ilerlese de "hangi tarihte"
+// bilgisi kayboluyordu). Kullanıcı şikayeti tam olarak buydu: "2. 3.
+// follow-up'ları doğru düzgün göstermiyor, bazen ilkini de". Çözüm: her
+// aşamanın KENDİ, asla üzerine yazılmayan tarih kolonu.
+ensureColumn("brands", "followup1_sent_at", "TEXT");
+ensureColumn("brands", "followup2_sent_at", "TEXT");
+ensureColumn("brands", "followup3_sent_at", "TEXT");
+
 module.exports = db;
 module.exports.dbFilePath = dbFilePath;

@@ -672,6 +672,12 @@ a.today-item-row:hover { background: #f5f5f8; }
 .muted { color: var(--text-muted); font-size: 13px; }
 hr.sep { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
+/* v79: Takip Listesi'ndeki follow-up zaman çizelgesi (İlk Mail -> 1./2./3.
+   Follow-up, her biri kendi tarihiyle) — dar sütunda okunaklı kalması için
+   normal .muted metinden biraz daha küçük ve satır aralığı sıkı. */
+.followup-timeline { font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.followup-timeline div { white-space: nowrap; }
+
 /* ---------- Modal ---------- */
 .overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
